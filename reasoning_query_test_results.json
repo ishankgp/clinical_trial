@@ -1,0 +1,75 @@
+{
+  "query": "Compare Phase 3 trials for metastatic bladder cancer using different checkpoint inhibitors",
+  "o3_mini_result": {
+    "filters": {
+      "primary_drug": null,
+      "indication": "metastatic bladder cancer",
+      "trial_phase": "Phase 3",
+      "trial_status": null,
+      "sponsor": null,
+      "line_of_therapy": null,
+      "biomarker": null
+    },
+    "query_intent": "The user wants to compare Phase 3 clinical trials for metastatic bladder cancer that use different immune checkpoint inhibitors as treatment options. The focus is on evaluating varying checkpoint inhibitor interventions across these trials.",
+    "search_strategy": "Search clinical trial databases for Phase 3 studies that list metastatic bladder cancer as the indication and include checkpoint inhibitors in the treatment arm. Identify trials that compare two or more checkpoint inhibitor agents and extract comparative data on efficacy, safety, or trial design. Use relevant filters (phase, indication, intervention details) to narrow the results.",
+    "relevant_fields": [
+      "trial_phase",
+      "indication",
+      "intervention (checkpoint inhibitors)",
+      "comparison arms",
+      "primary endpoints/outcomes",
+      "trial design",
+      "patient population"
+    ],
+    "confidence_score": 0.95
+  },
+  "o3_result": {
+    "filters": {
+      "primary_drug": null,
+      "indication": "metastatic bladder cancer",
+      "trial_phase": "Phase 3",
+      "trial_status": null,
+      "sponsor": null,
+      "line_of_therapy": null,
+      "biomarker": null
+    },
+    "query_intent": "The user wants to identify and compare Phase 3 clinical trials that evaluate different immune-checkpoint inhibitors in the treatment of metastatic bladder cancer.",
+    "search_strategy": "1) Start with an indication filter for metastatic bladder cancer (synonyms: advanced urothelial carcinoma, metastatic urothelial cancer).\n2) Apply a phase filter set to Phase 3.\n3) Add an intervention class filter for checkpoint inhibitors (PD-1, PD-L1, CTLA-4). Include drugs such as pembrolizumab, nivolumab, atezolizumab, durvalumab, avelumab, and tremelimumab.\n4) No status filter is specified, so include all statuses or optionally limit to \u2018Active\u2019 and \u2018Completed\u2019 to compare mature data.\n5) Export or display key fields (see below) in a side-by-side or tabular format to enable comparison.",
+    "relevant_fields": [
+      "Trial Identifier (NCT number)",
+      "Study Title",
+      "Checkpoint inhibitor name",
+      "Comparator arm",
+      "Phase",
+      "Recruitment Status",
+      "Study Design (randomized, open-label, etc.)",
+      "Population details (metastatic/locally advanced, prior therapy)",
+      "Primary and Key Secondary Endpoints",
+      "Line of Therapy",
+      "Sponsor",
+      "Results / Outcome measures"
+    ],
+    "confidence_score": 0.86
+  },
+  "gpt4o_result": {
+    "filters": {
+      "primary_drug": "checkpoint inhibitors",
+      "indication": "metastatic bladder cancer",
+      "trial_phase": "Phase 3",
+      "trial_status": null,
+      "sponsor": null,
+      "line_of_therapy": null,
+      "biomarker": null
+    },
+    "query_intent": "The user wants to compare Phase 3 clinical trials for metastatic bladder cancer that are using different checkpoint inhibitors.",
+    "search_strategy": "Search for Phase 3 clinical trials with the indication of metastatic bladder cancer and filter by trials using checkpoint inhibitors. Compare the trials based on outcomes, methodologies, and other relevant metrics.",
+    "relevant_fields": [
+      "trial_phase",
+      "indication",
+      "interventions",
+      "outcomes",
+      "methodology"
+    ],
+    "confidence_score": 0.9
+  }
+}
