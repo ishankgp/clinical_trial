@@ -92,11 +92,9 @@ class ClinicalTrialAnalyzerReasoning:
             logger.error(f"Error loading JSON file {json_file_path}: {e}")
             return None
     
-    def extract_basic_fields(self, trial_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract basic fields using rule-based approach"""
+    def extract_basic_fields(self, trial_data: Dict[str, Any], nct_id: str = None) -> Dict[str, Any]:
+        """Extract basic fields using rule-based approach, robustly extracting NCT ID"""
         protocol = trial_data.get("protocolSection", {})
-        
-        # Basic identification
         identification = protocol.get("identificationModule", {})
         status = protocol.get("statusModule", {})
         sponsor = protocol.get("sponsorCollaboratorsModule", {})
@@ -104,9 +102,20 @@ class ClinicalTrialAnalyzerReasoning:
         outcomes = protocol.get("outcomesModule", {})
         eligibility = protocol.get("eligibilityModule", {})
         contacts = protocol.get("contactsLocationsModule", {})
-        
+
+        # Robust NCT ID extraction
+        nct_id_extracted = (
+            identification.get("nctId") or
+            trial_data.get("nct_id") or
+            trial_data.get("NCT ID") or
+            trial_data.get("NCTId") or
+            trial_data.get("nctId") or
+            nct_id
+        )
+
         basic_fields = {
-            "Trial ID": identification.get("nctId"),
+            "NCT ID": nct_id_extracted,
+            "Trial ID": nct_id_extracted,
             "Trial Phase": self._extract_phase(design.get("phases", [])),
             "Trial Status": status.get("overallStatus"),
             "Patient Enrollment/Accrual": design.get("enrollmentInfo", {}).get("count"),
@@ -127,7 +136,6 @@ class ClinicalTrialAnalyzerReasoning:
             "Investigator Qualification": self._extract_investigator_qualification(contacts),
             "Investigator Location": self._extract_investigator_location(contacts),
         }
-        
         return basic_fields
     
     def analyze_drug_fields_reasoning(self, trial_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -551,8 +559,8 @@ class ClinicalTrialAnalyzerReasoning:
             "model_used": self.model
         }
         
-        # Extract basic fields
-        basic_fields = self.extract_basic_fields(trial_data)
+        # Extract basic fields (pass nct_id for fallback)
+        basic_fields = self.extract_basic_fields(trial_data, nct_id=nct_id)
         result.update(basic_fields)
         
         # Extract drug-related fields using reasoning

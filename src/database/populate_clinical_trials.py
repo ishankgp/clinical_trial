@@ -79,6 +79,18 @@ def download_trial_data(nct_id: str, json_url: str) -> dict:
         print(f"❌ Error downloading {nct_id}: {e}")
         return None
 
+def flatten_trial_data(trial_data):
+    """Ensure all values in trial_data are strings, ints, floats, or None (for DB storage)."""
+    for key, value in list(trial_data.items()):
+        if isinstance(value, list):
+            if value:
+                trial_data[key] = str(value[0])
+            else:
+                trial_data[key] = None
+        elif isinstance(value, dict):
+            trial_data[key] = json.dumps(value)
+    return trial_data
+
 def analyze_and_store_trial(nct_id: str, trial_data: dict, analyzer, db) -> bool:
     """Analyze and store trial in database"""
     try:
@@ -91,6 +103,8 @@ def analyze_and_store_trial(nct_id: str, trial_data: dict, analyzer, db) -> bool
             print(f"❌ Analysis error for {nct_id}: {result['error']}")
             return False
         
+        # Flatten all fields for DB storage
+        result = flatten_trial_data(result)
         # Store in database
         success = db.store_trial_data(result, {
             "analysis_model": "gpt-4o-mini",
@@ -138,25 +152,39 @@ def main():
         
         print(f"[{i}/{len(CLINICAL_TRIALS)}] Processing {nct_id}")
         
-        # Check if already exists
+        # Check if already exists in DB
         existing_trial = db.get_trial_by_nct_id(nct_id)
         if existing_trial:
             print(f"⏭️  {nct_id} already exists in database, skipping...")
             continue
         
-        # Download trial data
-        trial_data = download_trial_data(nct_id, json_url)
-        if trial_data:
-            successful_downloads += 1
-            
-            # Analyze and store
-            if analyze_and_store_trial(nct_id, trial_data, analyzer, db):
-                successful_stores += 1
-            
-            # Rate limiting
-            time.sleep(1)
+        # Check if JSON exists in cache
+        cache_file = Path("data/cache") / f"{nct_id}.json"
+        if cache_file.exists():
+            print(f"📦 Found cached JSON for {nct_id}, using local file...")
+            trial_data = json.load(open(cache_file, "r", encoding="utf-8"))
+        else:
+            # Download trial data
+            trial_data = download_trial_data(nct_id, json_url)
+            if not trial_data:
+                print(f"❌ Failed to download {nct_id}, skipping...")
+                continue
         
-        print()
+        # Analyze and store
+        if analyze_and_store_trial(nct_id, trial_data, analyzer, db):
+            print(f"✅ Stored {nct_id} in database")
+            # Remove from cache if present
+            if cache_file.exists():
+                try:
+                    cache_file.unlink()
+                    print(f"🗑️  Removed {cache_file} from cache")
+                except Exception as e:
+                    print(f"⚠️  Failed to remove {cache_file}: {e}")
+        else:
+            print(f"❌ Failed to process/store {nct_id}")
+        
+        # Rate limiting
+        time.sleep(1)
     
     # Summary
     print("=" * 50)

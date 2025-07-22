@@ -163,7 +163,7 @@ class ClinicalTrialMCPServer:
         
         # Register tools
         self._register_tools()
-    
+        
     def _init_database(self):
         """Initialize database connection"""
         try:
@@ -417,13 +417,10 @@ class ClinicalTrialMCPServer:
         filters = arguments.get("filters", {})
         limit = arguments.get("limit", 50)
         format_type = arguments.get("format", "table")
-        
         try:
             results = await self._perform_search(query, filters, limit)
-            
             if not results:
                 return "No trials found matching the criteria."
-            
             # Format results
             if format_type == "json":
                 return json.dumps(results, indent=2)
@@ -431,7 +428,6 @@ class ClinicalTrialMCPServer:
                 return self._format_summary(results)
             else:  # table format
                 return self._format_table(results)
-                
         except Exception as e:
             raise DatabaseError(f"Search failed: {str(e)}")
     
@@ -452,12 +448,10 @@ class ClinicalTrialMCPServer:
         """Get detailed trial information"""
         nct_id = arguments["nct_id"]
         include_raw_data = arguments.get("include_raw_data", False)
-        
         try:
             trial = self.db.get_trial_by_nct_id(nct_id)
             if not trial:
                 return f"Trial {nct_id} not found in database."
-            
             if include_raw_data:
                 return json.dumps(trial, indent=2)
             else:
@@ -469,19 +463,15 @@ class ClinicalTrialMCPServer:
                 result += f"- **Status:** {trial.get('trial_status', 'N/A')}\n"
                 result += f"- **Enrollment:** {trial.get('patient_enrollment', 'N/A')}\n"
                 result += f"- **Sponsor:** {trial.get('sponsor', 'N/A')}\n"
-                
                 result += "\n## Drug Information\n"
                 result += f"- **Primary Drug:** {trial.get('primary_drug', 'N/A')}\n"
                 result += f"- **MoA:** {trial.get('primary_drug_moa', 'N/A')}\n"
                 result += f"- **Target:** {trial.get('primary_drug_target', 'N/A')}\n"
-                
                 result += "\n## Clinical Information\n"
                 result += f"- **Indication:** {trial.get('indication', 'N/A')}\n"
                 result += f"- **Line of Therapy:** {trial.get('line_of_therapy', 'N/A')}\n"
                 result += f"- **Patient Population:** {trial.get('patient_population', 'N/A')}\n"
-                
                 return result
-                
         except Exception as e:
             raise DatabaseError(f"Failed to get trial details: {str(e)}")
     
@@ -490,17 +480,13 @@ class ClinicalTrialMCPServer:
         query = arguments["query"]
         limit = arguments.get("limit", 10)
         format_type = arguments.get("format", "table")
-        
         try:
             # Parse natural language query
             filters = await self._parse_natural_language_query(query)
-            
             # Perform search
             results = self.db.search_trials(filters, limit)
-            
             if not results:
                 return f"No trials found matching: {query}"
-            
             # Format results
             if format_type == "json":
                 return json.dumps(results, indent=2)
@@ -508,7 +494,6 @@ class ClinicalTrialMCPServer:
                 return self._format_summary(results)
             else:  # table format
                 return self._format_table(results)
-                
         except Exception as e:
             raise AnalysisError(f"Smart search failed: {str(e)}")
     
@@ -542,31 +527,21 @@ class ClinicalTrialMCPServer:
             - trial_countries: Countries where trial is conducted
             - geography: Global, US, Europe, Asia, etc.
 
-            TASK: Extract search filters from the natural language query. Consider:
-            1. Disease/indication terms (cancer, diabetes, heart disease, etc.)
-            2. Drug names (semaglutide, pembrolizumab, etc.)
-            3. Trial phases (phase 1, phase 2, phase 3, etc.)
-            4. Trial status (recruiting, completed, etc.)
-            5. Sponsor types (industry, academic, government)
-            6. Geographic preferences (US, Europe, global, etc.)
-            7. Patient population (adults, children, specific age groups)
-            8. Treatment lines (first line, second line, etc.)
-            9. Enrollment size preferences (large trials, small trials)
-            10. Time periods (recent trials, ongoing trials)
+            TASK: Extract search filters from the natural language query. For each filter (e.g., drug, indication, sponsor), return a LIST of all possible synonyms, brand names, and related terms that could match in the database. If only one term is found, return a single-item list. If no value, return an empty list or null.
 
             RESPONSE FORMAT: Return a JSON object with the following structure:
             {{
                 "filters": {{
-                    "primary_drug": "extracted drug name or null",
-                    "indication": "extracted disease/indication or null",
-                    "trial_phase": "PHASE1/PHASE2/PHASE3/PHASE4 or null",
-                    "trial_status": "RECRUITING/COMPLETED/etc or null",
-                    "sponsor": "extracted sponsor name or null",
-                    "line_of_therapy": "extracted therapy line or null",
-                    "biomarker": "extracted biomarker terms or null",
+                    "primary_drug": ["list", "of", "drug", "names"],
+                    "indication": ["list", "of", "diseases"],
+                    "trial_phase": ["PHASE1", "PHASE2", ...],
+                    "trial_status": ["RECRUITING", ...],
+                    "sponsor": ["list", "of", "sponsors"],
+                    "line_of_therapy": ["first line", ...],
+                    "biomarker": ["list", "of", "biomarkers"],
                     "enrollment_min": number or null,
                     "enrollment_max": number or null,
-                    "geography": "extracted geography or null"
+                    "geography": ["US", ...]
                 }},
                 "query_intent": "Brief description of what the user is looking for",
                 "search_strategy": "How to approach this search",
@@ -575,6 +550,16 @@ class ClinicalTrialMCPServer:
             }}
 
             EXAMPLES:
+            Query: "Show me trials for semaglutide or Ozempic"
+            Response: {{
+                "filters": {{
+                    "primary_drug": ["semaglutide", "ozempic"],
+                    "indication": [],
+                    ...
+                }},
+                ...
+            }}
+
             Query: "Find Phase 3 trials for metastatic bladder cancer using checkpoint inhibitors"
             Response: {{
                 "filters": {{
@@ -619,37 +604,34 @@ class ClinicalTrialMCPServer:
             """
             
             # Get LLM response
-            response = await analyzer.analyze_query(enhanced_prompt)
-            
-            # Parse the AI response
             try:
+                response = await analyzer.analyze_query(enhanced_prompt)
                 import json
                 result = json.loads(response)
-                
-                # Validate the result structure
                 if not isinstance(result, dict):
                     raise ValueError("Response is not a dictionary")
-                
-                # Ensure filters key exists
                 if "filters" not in result:
                     result["filters"] = {}
-                
-                # Clean up the filters - remove None values
-                result["filters"] = {k: v for k, v in result["filters"].items() if v is not None}
-                
+                # Accept both single values and lists, but always convert to list for downstream
+                for k, v in result["filters"].items():
+                    if v is None:
+                        result["filters"][k] = []
+                    elif not isinstance(v, list):
+                        result["filters"][k] = [v]
                 logger.info(f"LLM parsed query '{query}' into filters: {result['filters']}")
                 return result
-                
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 logger.warning(f"Failed to parse LLM response for query '{query}': {e}")
                 logger.warning(f"Raw response: {response}")
                 # Fallback to enhanced string-based parsing
                 return self._enhanced_fallback_parsing(query)
-                
+            except Exception as e:
+                logger.error(f"LLM query parsing failed for '{query}': {e}")
+                # Fallback to enhanced string-based parsing
+                return self._enhanced_fallback_parsing(query)
         except Exception as e:
-            logger.error(f"LLM query parsing failed for '{query}': {e}")
-            # Fallback to enhanced string-based parsing
-            return self._enhanced_fallback_parsing(query)
+            logger.error(f"Error in _parse_natural_language_query: {e}")
+            raise
     
     def _enhanced_fallback_parsing(self, query: str) -> Dict[str, Any]:
         """Enhanced fallback method for query parsing using advanced string processing"""
@@ -927,7 +909,6 @@ def main():
     """Main function to run the MCP server"""
     try:
         server = ClinicalTrialMCPServer()
-        
         print("🏥 Clinical Trial MCP Server - Fixed Version")
         print("=" * 50)
         print("Starting MCP server...")
@@ -937,9 +918,7 @@ def main():
         print("- get_trial_details: Get trial details")
         print("- smart_search: Natural language search")
         print("=" * 50)
-        
         asyncio.run(server.run())
-        
     except ImportError as e:
         print(f"❌ Import Error: {e}")
         print("Please ensure all required modules are available.")

@@ -463,87 +463,85 @@ class ClinicalTrialDatabase:
     def search_trials(self, filters: Dict[str, Any] = None, limit: int = 100) -> List[Dict[str, Any]]:
         """
         Search trials with optional filters using AI-generated search terms
-        
         Args:
             filters: Dictionary of field filters (can include AI-generated search_terms)
             limit: Maximum number of results
-        
         Returns:
             List of trial data dictionaries
         """
         try:
             cursor = self.connection.cursor()
-            
-            # Build query - use only the clinical_trials table
             query = "SELECT * FROM clinical_trials"
-            
             params = []
             where_clauses = []
-            
+            # Helper for multi-term, multi-field search
+            def multi_field_or_like(fields, terms):
+                clauses = []
+                for term in terms:
+                    for field in fields:
+                        clauses.append(f"LOWER({field}) LIKE ?")
+                        params.append(f"%{term.lower()}%")
+                return "(" + " OR ".join(clauses) + ")" if clauses else None
             if filters:
-                # Handle AI-generated search terms
-                if "search_terms" in filters and filters["search_terms"]:
-                    search_terms = filters["search_terms"]
-                    if isinstance(search_terms, list):
-                        # Create OR conditions for multiple search terms
-                        term_clauses = []
-                        for term in search_terms:
-                            term_clauses.append("""
-                                (trial_name LIKE ? OR 
-                                 primary_endpoints LIKE ? OR 
-                                 secondary_endpoints LIKE ? OR
-                                 inclusion_criteria LIKE ?)
-                            """)
-                            params.extend([f"%{term}%" for _ in range(4)])
-                        where_clauses.append("(" + " OR ".join(term_clauses) + ")")
-                    else:
-                        # Single search term
-                        where_clauses.append("""
-                            (trial_name LIKE ? OR 
-                             primary_endpoints LIKE ? OR 
-                             secondary_endpoints LIKE ? OR
-                             inclusion_criteria LIKE ?)
-                        """)
-                        params.extend([f"%{search_terms}%" for _ in range(4)])
-                
-                # Handle other specific filters
                 for field, value in filters.items():
-                    if field != "search_terms" and value is not None:
-                        if field == "phase":
-                            where_clauses.append("trial_phase LIKE ?")
-                            params.append(f"%{value}%")
-                        elif field == "sponsor":
-                            where_clauses.append("sponsor LIKE ?")
-                            params.append(f"%{value}%")
-                        elif field == "status":
-                            where_clauses.append("trial_status LIKE ?")
-                            params.append(f"%{value}%")
-                        elif field == "indication" or field == "disease":
-                            # Legacy support
-                            where_clauses.append("trial_name LIKE ?")
-                            params.append(f"%{value}%")
-                        elif field == "drug":
-                            # Legacy support
-                            where_clauses.append("trial_name LIKE ?")
-                            params.append(f"%{value}%")
-            
+                    if value is None or value == []:
+                        continue
+                    # Accept both single values and lists
+                    values = value if isinstance(value, list) else [value]
+                    if field in ["primary_drug", "drug"]:
+                        clause = multi_field_or_like([
+                            "primary_drug", "trial_name", "combination_partner", "experimental_regimen"
+                        ], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field in ["indication", "disease"]:
+                        clause = multi_field_or_like([
+                            "indication", "trial_name"
+                        ], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "trial_phase" or field == "phase":
+                        clause = multi_field_or_like(["trial_phase"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "trial_status" or field == "status":
+                        clause = multi_field_or_like(["trial_status"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "sponsor":
+                        clause = multi_field_or_like(["sponsor"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "line_of_therapy":
+                        clause = multi_field_or_like(["line_of_therapy"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "biomarker":
+                        clause = multi_field_or_like(["biomarker_mutations", "biomarker_stratification", "biomarker_wildtype"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "geography":
+                        clause = multi_field_or_like(["geography"], values)
+                        if clause:
+                            where_clauses.append(clause)
+                    elif field == "enrollment_min":
+                        where_clauses.append("patient_enrollment >= ?")
+                        params.append(int(values[0]))
+                    elif field == "enrollment_max":
+                        where_clauses.append("patient_enrollment <= ?")
+                        params.append(int(values[0]))
+                    # Add more fields as needed
             if where_clauses:
                 query += " WHERE " + " AND ".join(where_clauses)
-            
             query += f" ORDER BY created_at DESC LIMIT {limit}"
-            
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            
-            # Convert to list of dictionaries
             columns = [description[0] for description in cursor.description]
             results = []
             for row in rows:
                 trial_data = dict(zip(columns, row))
                 results.append(trial_data)
-            
             return results
-            
         except Exception as e:
             logger.error(f"Failed to search trials: {e}")
             return []
