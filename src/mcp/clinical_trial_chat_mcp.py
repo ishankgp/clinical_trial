@@ -38,7 +38,7 @@ class ClinicalTrialChatMCP:
         """Start the MCP server process"""
         try:
             # Start the MCP server as a subprocess
-            server_path = os.path.join(os.path.dirname(__file__), "clinical_trial_mcp_server_fixed.py")
+            server_path = os.path.join(os.path.dirname(__file__), "clinical_trial_mcp_server.py")
             self.mcp_process = subprocess.Popen(
                 ["python", server_path],
                 stdin=subprocess.PIPE,
@@ -372,33 +372,83 @@ class ClinicalTrialChatMCP:
             elif function_name == "smart_search":
                 query = arguments.get("query", "")
                 
-                # Parse natural language query and search
-                if "sponsor" in query.lower():
-                    # Search for sponsor information
-                    nct_match = None
-                    import re
-                    nct_pattern = r'NCT\d+'
-                    nct_match = re.search(nct_pattern, query)
+                # Use enhanced LLM-based query processing
+                try:
+                    # Import the reasoning analyzer for advanced query processing
+                    import sys
+                    analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
+                    if analysis_path not in sys.path:
+                        sys.path.append(analysis_path)
+                    from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     
-                    if nct_match:
-                        nct_id = nct_match.group()
-                        trial_data = db.get_trial_by_nct_id(nct_id)
-                        if trial_data:
-                            sponsor = trial_data.get('sponsor', 'N/A')
-                            return f"🏥 **Sponsor Information**\n\n**Trial:** {nct_id}\n**Sponsor:** {sponsor}\n\n**Additional Details:**\n• Name: {trial_data.get('trial_name', 'N/A')}\n• Phase: {trial_data.get('trial_phase', 'N/A')}\n• Status: {trial_data.get('trial_status', 'N/A')}"
-                        else:
-                            return f"❌ Trial {nct_id} not found in database"
+                    # Get API key for the analyzer
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if not api_key:
+                        return "❌ OpenAI API key not available for advanced query processing"
+                    
+                    # Use reasoning model for query analysis
+                    analyzer = ClinicalTrialAnalyzerReasoning(api_key, model="o3-mini")
+                    analysis_result = analyzer.analyze_query(query)
+                    
+                    # Extract filters from the analysis
+                    filters = analysis_result.get('filters', {})
+                    query_intent = analysis_result.get('query_intent', 'N/A')
+                    confidence = analysis_result.get('confidence_score', 0.0)
+                    
+                    # Perform search with extracted filters
+                    results = db.search_trials(filters, 20)
+                    
+                    if results:
+                        response = f"🧠 **Smart Search Results** (Confidence: {confidence:.2f})\n\n"
+                        response += f"**Query:** {query}\n"
+                        response += f"**Intent:** {query_intent}\n\n"
+                        response += f"**Found {len(results)} trials:**\n\n"
+                        
+                        for trial in results[:10]:
+                            response += f"• **{trial.get('nct_id', 'Unknown')}**: {trial.get('trial_name', 'No name')}\n"
+                            response += f"  Phase: {trial.get('trial_phase', 'N/A')}, Status: {trial.get('trial_status', 'N/A')}\n"
+                            if trial.get('primary_drug'):
+                                response += f"  Drug: {trial.get('primary_drug', 'N/A')}\n"
+                            response += "\n"
+                        
+                        if len(results) > 10:
+                            response += f"... and {len(results) - 10} more trials\n\n"
+                        
+                        response += f"**Search Filters Applied:** {list(filters.keys()) if filters else 'None'}"
+                        
+                        return response
                     else:
-                        return "❌ Please provide an NCT ID to find sponsor information"
-                
-                # Generic search
-                results = db.search_trials({}, 10)
-                if results:
-                    return f"🧠 **Smart Search Results for: {query}**\n\n" + \
-                           "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}" 
-                                     for trial in results[:5]])
-                else:
-                    return f"🧠 No results found for: {query}"
+                        return f"🧠 **Smart Search Results**\n\n**Query:** {query}\n**Intent:** {query_intent}\n\n❌ No trials found matching the criteria.\n\n**Suggestions:**\n• Try broadening your search terms\n• Check spelling of drug or disease names\n• Consider different trial phases or statuses"
+                        
+                except Exception as e:
+                    # Fallback to basic search if LLM processing fails
+                    logger.warning(f"LLM smart search failed, falling back to basic search: {e}")
+                    
+                    # Basic pattern matching for common queries
+                    if "sponsor" in query.lower():
+                        import re
+                        nct_pattern = r'NCT\d+'
+                        nct_match = re.search(nct_pattern, query)
+                        
+                        if nct_match:
+                            nct_id = nct_match.group()
+                            trial_data = db.get_trial_by_nct_id(nct_id)
+                            if trial_data:
+                                sponsor = trial_data.get('sponsor', 'N/A')
+                                return f"🏥 **Sponsor Information**\n\n**Trial:** {nct_id}\n**Sponsor:** {sponsor}\n\n**Additional Details:**\n• Name: {trial_data.get('trial_name', 'N/A')}\n• Phase: {trial_data.get('trial_phase', 'N/A')}\n• Status: {trial_data.get('trial_status', 'N/A')}"
+                            else:
+                                return f"❌ Trial {nct_id} not found in database"
+                        else:
+                            return "❌ Please provide an NCT ID to find sponsor information"
+                    
+                    # Generic fallback search
+                    results = db.search_trials({}, 10)
+                    if results:
+                        return f"🧠 **Basic Search Results for: {query}**\n\n" + \
+                               "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}" 
+                                         for trial in results[:5]])
+                    else:
+                        return f"🧠 No results found for: {query}"
             
             elif function_name == "get_trials_by_drug":
                 drug_name = arguments.get("drug_name", "")

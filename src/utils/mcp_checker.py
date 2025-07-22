@@ -29,12 +29,12 @@ def check_mcp_availability():
         status["recommendations"].append("Install MCP: pip install mcp")
     
     # Check if MCP server file exists
-    server_path = Path(__file__).parent.parent / "mcp" / "clinical_trial_mcp_server_fixed.py"
+    server_path = Path(__file__).parent.parent / "mcp" / "clinical_trial_mcp_server.py"
     if server_path.exists():
         status["mcp_server_file"] = True
     else:
         status["issues"].append("MCP server file not found")
-        status["recommendations"].append("Ensure clinical_trial_mcp_server_fixed.py exists")
+        status["recommendations"].append("Ensure clinical_trial_mcp_server.py exists")
     
     # Check if MCP chat file exists
     chat_path = Path(__file__).parent.parent / "mcp" / "clinical_trial_chat_mcp.py"
@@ -103,7 +103,7 @@ def get_mcp_setup_instructions():
             {
                 "step": 3,
                 "title": "Start MCP Server",
-                "command": "python src/mcp/clinical_trial_mcp_server_fixed.py",
+                "command": "python src/mcp/clinical_trial_mcp_server.py",
                 "description": "Run the MCP server in a separate terminal"
             },
             {

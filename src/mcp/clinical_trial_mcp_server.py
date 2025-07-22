@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
 """
-Clinical Trial MCP Server
-=========================
-
-This module implements a Model Context Protocol (MCP) server that exposes clinical trial 
-database operations as tools for AI chat interfaces. The server acts as a bridge between 
-AI models and the clinical trial database, allowing natural language queries and 
-automated data processing.
-
-Key Features:
-- Store and analyze clinical trials from ClinicalTrials.gov
-- Search trials with natural language and structured filters
-- Compare multiple trials side by side
-- Generate statistics and reports
-- Export data in various formats
-- Smart search with natural language processing
-
-Architecture:
-- Uses MCP protocol for standardized AI tool integration
-- Integrates with SQLite database for data persistence
-- Supports multiple AI models for trial analysis
-- Provides both structured and natural language interfaces
+Clinical Trial MCP Server - Fixed Version
+Addresses logic gaps in the original implementation
 """
 
 import asyncio
@@ -29,11 +10,13 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 from datetime import datetime
 import os
+import sys
 from pathlib import Path
 import sqlite3
 import pandas as pd
+from contextlib import asynccontextmanager
 
-# MCP (Model Context Protocol) imports - Core framework for AI tool integration
+# MCP imports
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
@@ -49,80 +32,217 @@ from mcp.types import (
     LoggingLevel,
 )
 
-# Import our custom database and analysis modules
-from ..database.clinical_trial_database import ClinicalTrialDatabase
-from ..analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-from ..analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
+# Add src to Python path for imports
+current_dir = Path(__file__).parent
+src_dir = current_dir.parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
 
-# Configure logging for debugging and monitoring
+# Fixed imports with proper fallback
+try:
+    from database.clinical_trial_database import ClinicalTrialDatabase
+    from analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+    from analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
+except ImportError:
+    # Fallback for direct execution from project root
+    try:
+        from src.database.clinical_trial_database import ClinicalTrialDatabase
+        from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+        from src.analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
+    except ImportError:
+        # Final fallback - try to find modules in current directory
+        print("Warning: Could not import required modules. Please ensure you're running from the project root.")
+        ClinicalTrialDatabase = None
+        ClinicalTrialAnalyzerReasoning = None
+        ClinicalTrialAnalyzerLLM = None
+
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class ClinicalTrialMCPServer:
-    """
-    MCP Server for clinical trial data management and querying
+# Custom exceptions
+class MCPError(Exception):
+    """Base exception for MCP server errors"""
+    pass
+
+class ValidationError(MCPError):
+    """Validation error"""
+    pass
+
+class DatabaseError(MCPError):
+    """Database error"""
+    pass
+
+class AnalysisError(MCPError):
+    """Analysis error"""
+    pass
+
+class DatabasePool:
+    """Thread-safe database connection pool using standard sqlite3"""
     
-    This class implements the core MCP server functionality, providing tools that AI models
-    can use to interact with clinical trial data. It handles:
-    - Tool registration and management
-    - Database operations
-    - Trial analysis and processing
-    - Data formatting and export
-    - Natural language query processing
-    """
+    def __init__(self, db_path: str, max_connections: int = 10):
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self._pool = []
+        self._lock = asyncio.Lock()
+    
+    @asynccontextmanager
+    async def get_connection(self):
+        async with self._lock:
+            if self._pool:
+                conn = self._pool.pop()
+            else:
+                # Use standard sqlite3 instead of aiosqlite
+                conn = sqlite3.connect(self.db_path)
+        
+        try:
+            yield conn
+        finally:
+            async with self._lock:
+                if len(self._pool) < self.max_connections:
+                    self._pool.append(conn)
+                else:
+                    conn.close()
+
+class CacheManager:
+    """Proper cache management with expiration"""
+    
+    def __init__(self, cache_dir: Path, max_age_hours: int = 24):
+        self.cache_dir = cache_dir
+        self.max_age_seconds = max_age_hours * 3600
+        self.cache_dir.mkdir(exist_ok=True)
+    
+    def get_cached_data(self, key: str) -> Optional[Dict[str, Any]]:
+        cache_file = self.cache_dir / f"{key}.json"
+        
+        if not cache_file.exists():
+            return None
+        
+        # Check if cache is stale
+        import time
+        file_age = time.time() - cache_file.stat().st_mtime
+        if file_age > self.max_age_seconds:
+            cache_file.unlink()  # Remove stale cache
+            return None
+        
+        try:
+            with open(cache_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load cache for {key}: {e}")
+            cache_file.unlink()  # Remove corrupted cache
+            return None
+    
+    def set_cached_data(self, key: str, data: Dict[str, Any]):
+        cache_file = self.cache_dir / f"{key}.json"
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save cache for {key}: {e}")
+
+class ClinicalTrialMCPServer:
+    """MCP Server for clinical trial data management and querying - Fixed Version"""
     
     def __init__(self):
-        """
-        Initialize the MCP server with database connection and tool registration
+        """Initialize the MCP server with proper error handling"""
+        # Check if required modules are available
+        if ClinicalTrialDatabase is None:
+            raise ImportError("ClinicalTrialDatabase module not available")
         
-        Sets up:
-        - MCP server instance with unique identifier
-        - Database connection for clinical trial data
-        - Cache for AI model analyzers (to avoid re-initialization)
-        - Tool registration for all available operations
-        """
-        # Create MCP server instance with unique name
-        self.server = Server("clinical-trial-mcp-server")
-        
-        # Initialize database connection for clinical trial data
-        self.db = ClinicalTrialDatabase()
-        
-        # Cache for AI model analyzers to avoid re-initialization
-        # Key: model_name, Value: analyzer instance
+        self.server = Server("clinical-trial-mcp-server-fixed")
+        self.db = None
         self.analyzers = {}
+        self.cache_manager = None
+        self.db_pool = None
         
-        # Register all available tools with the MCP server
+        # Initialize components
+        self._init_database()
+        self._init_cache()
+        self._init_analyzers()
+        
+        # Register tools
         self._register_tools()
+    
+    def _init_database(self):
+        """Initialize database connection"""
+        try:
+            self.db = ClinicalTrialDatabase()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise DatabaseError(f"Database initialization failed: {e}")
+    
+    def _init_cache(self):
+        """Initialize cache manager"""
+        try:
+            cache_dir = Path("data/cache")
+            self.cache_manager = CacheManager(cache_dir)
+            logger.info("Cache manager initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize cache: {e}")
+            self.cache_manager = None
+    
+    def _init_analyzers(self):
+        """Initialize AI analyzers"""
+        try:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                logger.warning("OPENAI_API_KEY not found in environment")
+                return
+            
+            # Initialize analyzers lazily when needed
+            self.api_key = api_key
+            logger.info("Analyzers ready for initialization")
+        except Exception as e:
+            logger.warning(f"Failed to initialize analyzers: {e}")
+    
+    async def _get_analyzer(self, model_name: str) -> Any:
+        """Get or create analyzer for specified model"""
+        if model_name not in self.analyzers:
+            if not hasattr(self, 'api_key') or not self.api_key:
+                raise AnalysisError("OpenAI API key not available")
+            
+            try:
+                if model_name == "llm":
+                    self.analyzers[model_name] = ClinicalTrialAnalyzerLLM(self.api_key)
+                else:
+                    self.analyzers[model_name] = ClinicalTrialAnalyzerReasoning(self.api_key, model=model_name)
+                logger.info(f"Initialized analyzer for model: {model_name}")
+            except Exception as e:
+                raise AnalysisError(f"Failed to initialize analyzer for {model_name}: {e}")
         
+        return self.analyzers[model_name]
+    
+    def _validate_nct_id(self, nct_id: str) -> bool:
+        """Validate NCT ID format"""
+        if not nct_id or not isinstance(nct_id, str):
+            return False
+        return nct_id.upper().startswith("NCT") and len(nct_id) >= 8
+    
+    def _validate_store_trial_args(self, arguments: Dict[str, Any]):
+        """Validate arguments for store_trial tool"""
+        if "nct_id" not in arguments:
+            raise ValidationError("nct_id is required")
+        
+        nct_id = arguments["nct_id"]
+        if not self._validate_nct_id(nct_id):
+            raise ValidationError(f"Invalid NCT ID format: {nct_id}")
+        
+        # Validate model if provided
+        if "analyze_with_model" in arguments:
+            valid_models = ["gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
+            if arguments["analyze_with_model"] not in valid_models:
+                raise ValidationError(f"Invalid model: {arguments['analyze_with_model']}")
+    
     def _register_tools(self):
-        """
-        Register all available tools with the MCP server
-        
-        This method defines all the tools that AI models can use to interact with
-        clinical trial data. Each tool has:
-        - A unique name
-        - A description of its functionality
-        - An input schema defining required and optional parameters
-        - A corresponding implementation method
-        
-        Tools are categorized into:
-        - Data Management: store_trial, search_trials, get_trial_details
-        - Analysis: compare_trials, get_trial_statistics, analyze_trial_with_model
-        - Export: export_trials, get_available_columns
-        - Specialized Queries: get_trials_by_drug, get_trials_by_indication, smart_search
-        """
+        """Register all available tools with proper validation"""
         
         @self.server.list_tools()
         async def handle_list_tools() -> ListToolsResult:
-            """
-            List all available tools for AI models
-            
-            This is called by AI clients to discover what tools are available.
-            Returns a structured list of all tools with their schemas.
-            """
+            """List all available tools"""
             return ListToolsResult(
                 tools=[
-                    # Tool 1: Store and analyze clinical trials
                     Tool(
                         name="store_trial",
                         description="Store a clinical trial from JSON file or NCT ID",
@@ -131,14 +251,12 @@ class ClinicalTrialMCPServer:
                             "properties": {
                                 "nct_id": {"type": "string", "description": "NCT ID of the trial"},
                                 "json_file_path": {"type": "string", "description": "Path to JSON file (optional)"},
-                                "analyze_with_model": {"type": "string", "enum": ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "gpt-4", "llm"], "default": "o3-mini", "description": "Model to use for analysis (o3/o3-mini are reasoning models)"},
+                                "analyze_with_model": {"type": "string", "enum": ["gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"], "default": "gpt-4o-mini", "description": "Model to use for analysis"},
                                 "force_reanalyze": {"type": "boolean", "default": False, "description": "Force reanalysis even if trial exists"}
                             },
                             "required": ["nct_id"]
                         }
                     ),
-                    
-                    # Tool 2: Search trials with flexible filters
                     Tool(
                         name="search_trials",
                         description="Search clinical trials with flexible filters",
@@ -157,9 +275,7 @@ class ClinicalTrialMCPServer:
                                         "line_of_therapy": {"type": "string"},
                                         "biomarker": {"type": "string"},
                                         "enrollment_min": {"type": "integer"},
-                                        "enrollment_max": {"type": "integer"},
-                                        "start_date_from": {"type": "string", "description": "Start date from (YYYY-MM-DD)"},
-                                        "start_date_to": {"type": "string", "description": "Start date to (YYYY-MM-DD)"}
+                                        "enrollment_max": {"type": "integer"}
                                     }
                                 },
                                 "limit": {"type": "integer", "default": 50},
@@ -167,8 +283,6 @@ class ClinicalTrialMCPServer:
                             }
                         }
                     ),
-                    
-                    # Tool 3: Get detailed trial information
                     Tool(
                         name="get_trial_details",
                         description="Get detailed information about a specific trial",
@@ -181,107 +295,6 @@ class ClinicalTrialMCPServer:
                             "required": ["nct_id"]
                         }
                     ),
-                    
-                    # Tool 4: Compare multiple trials
-                    Tool(
-                        name="compare_trials",
-                        description="Compare multiple clinical trials side by side",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "nct_ids": {"type": "array", "items": {"type": "string"}, "description": "List of NCT IDs to compare"},
-                                "fields": {"type": "array", "items": {"type": "string"}, "description": "Fields to compare (default: all)"},
-                                "format": {"type": "string", "enum": ["table", "json"], "default": "table"}
-                            },
-                            "required": ["nct_ids"]
-                        }
-                    ),
-                    
-                    # Tool 5: Get trial statistics
-                    Tool(
-                        name="get_trial_statistics",
-                        description="Get statistical information about stored trials",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "group_by": {"type": "string", "enum": ["phase", "status", "sponsor", "indication", "primary_drug"], "default": "phase"},
-                                "include_charts": {"type": "boolean", "default": True}
-                            }
-                        }
-                    ),
-                    
-                    # Tool 6: Analyze trial with specific model
-                    Tool(
-                        name="analyze_trial_with_model",
-                        description="Analyze a trial with a specific model and store results",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "nct_id": {"type": "string", "description": "NCT ID of the trial"},
-                                "model": {"type": "string", "enum": ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "gpt-4", "llm"], "default": "o3-mini"},
-                                "json_file_path": {"type": "string", "description": "Path to JSON file (optional)"}
-                            },
-                            "required": ["nct_id", "model"]
-                        }
-                    ),
-                    
-                    # Tool 7: Get database schema information
-                    Tool(
-                        name="get_available_columns",
-                        description="Get list of available columns in the database",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "table": {"type": "string", "enum": ["clinical_trials", "drug_info", "clinical_info", "biomarker_info"], "default": "clinical_trials"}
-                            }
-                        }
-                    ),
-                    
-                    # Tool 8: Export trial data
-                    Tool(
-                        name="export_trials",
-                        description="Export trials to CSV or JSON format",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "format": {"type": "string", "enum": ["csv", "json"], "default": "csv"},
-                                "filters": {"type": "object", "description": "Optional filters to apply"},
-                                "filename": {"type": "string", "description": "Output filename"}
-                            }
-                        }
-                    ),
-                    
-                    # Tool 9: Find trials by drug
-                    Tool(
-                        name="get_trials_by_drug",
-                        description="Find all trials for a specific drug",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "drug_name": {"type": "string", "description": "Name of the drug"},
-                                "include_similar": {"type": "boolean", "default": True, "description": "Include similar drug names"},
-                                "limit": {"type": "integer", "default": 20}
-                            },
-                            "required": ["drug_name"]
-                        }
-                    ),
-                    
-                    # Tool 10: Find trials by indication
-                    Tool(
-                        name="get_trials_by_indication",
-                        description="Find all trials for a specific indication",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "indication": {"type": "string", "description": "Disease indication"},
-                                "include_similar": {"type": "boolean", "default": True, "description": "Include similar indications"},
-                                "limit": {"type": "integer", "default": 20}
-                            },
-                            "required": ["indication"]
-                        }
-                    ),
-                    
-                    # Tool 11: Smart natural language search
                     Tool(
                         name="smart_search",
                         description="Intelligent search that interprets natural language queries",
@@ -294,925 +307,580 @@ class ClinicalTrialMCPServer:
                             },
                             "required": ["query"]
                         }
-                    ),
-                    
-                    # Tool 12: Advanced reasoning-based query (NEW)
-                    Tool(
-                        name="reasoning_query",
-                        description="Advanced natural language query using reasoning models for complex clinical trial questions",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "Complex natural language query requiring reasoning"},
-                                "reasoning_model": {"type": "string", "enum": ["o3", "o3-mini"], "default": "o3-mini", "description": "Reasoning model to use for query interpretation"},
-                                "include_analysis": {"type": "boolean", "default": True, "description": "Include AI analysis and insights"},
-                                "limit": {"type": "integer", "default": 20},
-                                "format": {"type": "string", "enum": ["detailed", "summary", "analysis"], "default": "detailed"}
-                            },
-                            "required": ["query"]
-                        }
-                    ),
-                    
-                    # Tool 13: Comparative analysis (NEW)
-                    Tool(
-                        name="compare_analysis",
-                        description="Compare trials based on natural language criteria with AI-powered insights",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "comparison_criteria": {"type": "string", "description": "Natural language description of what to compare"},
-                                "trial_ids": {"type": "array", "items": {"type": "string"}, "description": "Optional specific NCT IDs to compare"},
-                                "auto_find_similar": {"type": "boolean", "default": True, "description": "Automatically find similar trials if no IDs provided"},
-                                "analysis_depth": {"type": "string", "enum": ["basic", "detailed", "expert"], "default": "detailed"}
-                            },
-                            "required": ["comparison_criteria"]
-                        }
-                    ),
-                    
-                    # Tool 14: Trend analysis (NEW)
-                    Tool(
-                        name="trend_analysis",
-                        description="Analyze trends and patterns in clinical trials using natural language queries",
-                        inputSchema={
-                            "type": "object",
-                            "properties": {
-                                "trend_query": {"type": "string", "description": "Natural language description of trends to analyze"},
-                                "time_period": {"type": "string", "description": "Time period for analysis (e.g., 'last 5 years', '2020-2024')"},
-                                "group_by": {"type": "string", "enum": ["drug", "indication", "phase", "sponsor", "geography"], "default": "drug"},
-                                "include_insights": {"type": "boolean", "default": True}
-                            },
-                            "required": ["trend_query"]
-                        }
                     )
                 ]
             )
         
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> CallToolResult:
-            """
-            Handle tool execution requests from AI models
-            
-            This is the main dispatcher that routes tool calls to their appropriate
-            implementation methods. It includes error handling and logging.
-            
-            Args:
-                name: Name of the tool to execute
-                arguments: Dictionary of arguments for the tool
-                
-            Returns:
-                CallToolResult: Structured result with text content
-            """
+            """Handle tool calls with proper error handling"""
             try:
-                # Route tool calls to appropriate implementation methods
+                # Validate arguments based on tool
                 if name == "store_trial":
+                    self._validate_store_trial_args(arguments)
                     result = await self._store_trial(arguments)
                 elif name == "search_trials":
                     result = await self._search_trials(arguments)
                 elif name == "get_trial_details":
+                    if "nct_id" not in arguments:
+                        raise ValidationError("nct_id is required for get_trial_details")
                     result = await self._get_trial_details(arguments)
-                elif name == "compare_trials":
-                    result = await self._compare_trials(arguments)
-                elif name == "get_trial_statistics":
-                    result = await self._get_trial_statistics(arguments)
-                elif name == "analyze_trial_with_model":
-                    result = await self._analyze_trial_with_model(arguments)
-                elif name == "get_available_columns":
-                    result = await self._get_available_columns(arguments)
-                elif name == "export_trials":
-                    result = await self._export_trials(arguments)
-                elif name == "get_trials_by_drug":
-                    result = await self._get_trials_by_drug(arguments)
-                elif name == "get_trials_by_indication":
-                    result = await self._get_trials_by_indication(arguments)
                 elif name == "smart_search":
+                    if "query" not in arguments:
+                        raise ValidationError("query is required for smart_search")
                     result = await self._smart_search(arguments)
-                elif name == "reasoning_query":
-                    result = await self._reasoning_query(arguments)
-                elif name == "compare_analysis":
-                    result = await self._compare_analysis(arguments)
-                elif name == "trend_analysis":
-                    result = await self._trend_analysis(arguments)
                 else:
-                    # Handle unknown tools gracefully
                     return CallToolResult(
                         content=[TextContent(type="text", text=f"Unknown tool: {name}")]
                     )
                 
-                # Return successful result
                 return CallToolResult(content=[TextContent(type="text", text=result)])
                 
+            except ValidationError as e:
+                logger.warning(f"Validation error in tool {name}: {e}")
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Validation Error: {str(e)}")]
+                )
+            except DatabaseError as e:
+                logger.error(f"Database error in tool {name}: {e}")
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Database Error: {str(e)}")]
+                )
+            except AnalysisError as e:
+                logger.error(f"Analysis error in tool {name}: {e}")
+                return CallToolResult(
+                    content=[TextContent(type="text", text=f"Analysis Error: {str(e)}")]
+                )
             except Exception as e:
-                # Log and return error information
-                logger.error(f"Error in tool {name}: {e}")
+                logger.error(f"Unexpected error in tool {name}: {e}")
                 return CallToolResult(
                     content=[TextContent(type="text", text=f"Error: {str(e)}")]
                 )
     
     async def _store_trial(self, arguments: Dict[str, Any]) -> str:
-        """
-        Store and analyze a clinical trial in the database
-        
-        This method handles the complete pipeline of:
-        1. Checking if trial already exists
-        2. Initializing appropriate AI analyzer
-        3. Analyzing trial data with AI model
-        4. Storing results in database
-        
-        Args:
-            arguments: Dictionary containing:
-                - nct_id: NCT ID of the trial
-                - json_file_path: Optional path to JSON file
-                - analyze_with_model: AI model to use for analysis
-                - force_reanalyze: Whether to reanalyze existing trials
-                
-        Returns:
-            str: Success/error message
-        """
-        # Extract parameters from arguments
+        """Store and analyze a clinical trial with proper error handling"""
         nct_id = arguments["nct_id"]
         json_file_path = arguments.get("json_file_path")
-        analyze_with_model = arguments.get("analyze_with_model", "o3-mini")
+        analyze_with_model = arguments.get("analyze_with_model", "gpt-4o-mini")
         force_reanalyze = arguments.get("force_reanalyze", False)
         
-        # Check if trial already exists in database
+        # Check cache first
+        cache_key = f"trial_{nct_id}_{analyze_with_model}"
+        if not force_reanalyze and self.cache_manager:
+            cached_result = self.cache_manager.get_cached_data(cache_key)
+            if cached_result:
+                return f"✅ Retrieved cached analysis for trial {nct_id}"
+        
+        # Check if trial already exists
         existing_trial = self.db.get_trial_by_nct_id(nct_id)
         if existing_trial and not force_reanalyze:
             return f"Trial {nct_id} already exists in database. Use force_reanalyze=true to reanalyze."
         
-        # Get or create AI analyzer instance (cached for performance)
-        if analyze_with_model not in self.analyzers:
-            # Get OpenAI API key from environment
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return "Error: OPENAI_API_KEY not found in environment"
-            
-            # Initialize appropriate analyzer based on model type
-            if analyze_with_model == "llm":
-                # Use LLM-based analyzer for simple extraction
-                self.analyzers[analyze_with_model] = ClinicalTrialAnalyzerLLM(api_key)
-            else:
-                # Use reasoning-based analyzer for complex analysis
-                self.analyzers[analyze_with_model] = ClinicalTrialAnalyzerReasoning(api_key, model=analyze_with_model)
-        
-        analyzer = self.analyzers[analyze_with_model]
-        
-        # Analyze the trial using AI model
+        # Get analyzer and perform analysis
         try:
+            analyzer = await self._get_analyzer(analyze_with_model)
             result = analyzer.analyze_trial(nct_id, json_file_path)
-            if "error" in result:
-                return f"Error analyzing trial {nct_id}: {result['error']}"
             
-            # Store analyzed results in database with metadata
-            success = self.db.store_trial_data(result, {
+            if "error" in result:
+                raise AnalysisError(f"Analysis failed: {result['error']}")
+            
+            # Store in database
+            success = await self._store_trial_data(result, {
                 "analysis_model": analyze_with_model,
                 "analysis_timestamp": datetime.now().isoformat(),
                 "source_file": json_file_path
             })
             
             if success:
+                # Cache the result
+                if self.cache_manager:
+                    self.cache_manager.set_cached_data(cache_key, result)
+                
                 return f"✅ Successfully stored trial {nct_id} using {analyze_with_model} model"
             else:
-                return f"❌ Failed to store trial {nct_id}"
+                raise DatabaseError(f"Failed to store trial {nct_id}")
                 
         except Exception as e:
-            return f"Error processing trial {nct_id}: {str(e)}"
+            raise AnalysisError(f"Error processing trial {nct_id}: {str(e)}")
+    
+    async def _store_trial_data(self, trial_data: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+        """Store trial data in database"""
+        try:
+            return self.db.store_trial_data(trial_data, metadata)
+        except Exception as e:
+            logger.error(f"Failed to store trial data: {e}")
+            return False
     
     async def _search_trials(self, arguments: Dict[str, Any]) -> str:
-        """
-        Search clinical trials with flexible filters and natural language processing
-        
-        This method combines structured filters with natural language query processing
-        to provide flexible search capabilities.
-        
-        Args:
-            arguments: Dictionary containing:
-                - query: Natural language search query
-                - filters: Structured filters (drug, indication, phase, etc.)
-                - limit: Maximum number of results
-                - format: Output format (table, json, summary)
-                
-        Returns:
-            str: Formatted search results
-        """
-        # Extract search parameters
+        """Search trials with proper error handling"""
         query = arguments.get("query", "")
         filters = arguments.get("filters", {})
         limit = arguments.get("limit", 50)
         format_type = arguments.get("format", "table")
         
-        # Build search filters combining natural language and structured filters
-        search_filters = {}
-        
-        # Process natural language query to extract structured filters
+        try:
+            results = await self._perform_search(query, filters, limit)
+            
+            if not results:
+                return "No trials found matching the criteria."
+            
+            # Format results
+            if format_type == "json":
+                return json.dumps(results, indent=2)
+            elif format_type == "summary":
+                return self._format_summary(results)
+            else:  # table format
+                return self._format_table(results)
+                
+        except Exception as e:
+            raise DatabaseError(f"Search failed: {str(e)}")
+    
+    async def _perform_search(self, query: str, filters: Dict[str, Any], limit: int) -> List[Dict[str, Any]]:
+        """Perform the actual search operation using AI-driven query understanding"""
+        # Use AI to parse the natural language query
         if query:
-            # Simple keyword matching for common terms
-            if "diabetes" in query.lower():
-                search_filters["indication"] = "diabetes"
-            if "cancer" in query.lower():
-                search_filters["indication"] = "cancer"
-            if "phase" in query.lower():
-                # Extract phase information from query
-                if "1" in query:
-                    search_filters["trial_phase"] = "PHASE1"
-                elif "2" in query:
-                    search_filters["trial_phase"] = "PHASE2"
-                elif "3" in query:
-                    search_filters["trial_phase"] = "PHASE3"
+            ai_filters = await self._parse_natural_language_query(query)
+            # Merge AI-generated filters with explicit filters
+            search_filters = {**ai_filters, **filters}
+        else:
+            search_filters = filters
         
-        # Merge with explicit filters (explicit filters take precedence)
-        search_filters.update(filters)
-        
-        # Execute search against database
-        results = self.db.search_trials(search_filters, limit)
-        
-        if not results:
-            return "No trials found matching the criteria."
-        
-        # Format results based on requested format
-        if format_type == "json":
-            return json.dumps(results, indent=2)
-        elif format_type == "summary":
-            return self._format_summary(results)
-        else:  # table format (default)
-            return self._format_table(results)
+        # Execute search with AI-generated search terms
+        return self.db.search_trials(search_filters, limit)
     
     async def _get_trial_details(self, arguments: Dict[str, Any]) -> str:
-        """
-        Get detailed information about a specific clinical trial
-        
-        Retrieves comprehensive trial information and formats it for easy reading.
-        Can include raw JSON data if requested.
-        
-        Args:
-            arguments: Dictionary containing:
-                - nct_id: NCT ID of the trial
-                - include_raw_data: Whether to include raw JSON data
-                
-        Returns:
-            str: Formatted trial details
-        """
+        """Get detailed trial information"""
         nct_id = arguments["nct_id"]
         include_raw_data = arguments.get("include_raw_data", False)
         
-        # Retrieve trial from database
-        trial = self.db.get_trial_by_nct_id(nct_id)
-        if not trial:
-            return f"Trial {nct_id} not found in database."
-        
-        # Return raw JSON if requested
-        if include_raw_data:
-            return json.dumps(trial, indent=2)
-        else:
-            # Format as readable markdown text
-            result = f"# Trial Details: {nct_id}\n\n"
-            
-            # Basic trial information section
-            result += "## Basic Information\n"
-            result += f"- **Trial Name:** {trial.get('trial_name', 'N/A')}\n"
-            result += f"- **Phase:** {trial.get('trial_phase', 'N/A')}\n"
-            result += f"- **Status:** {trial.get('trial_status', 'N/A')}\n"
-            result += f"- **Enrollment:** {trial.get('patient_enrollment', 'N/A')}\n"
-            result += f"- **Sponsor:** {trial.get('sponsor', 'N/A')}\n"
-            
-            # Drug information section
-            result += "\n## Drug Information\n"
-            result += f"- **Primary Drug:** {trial.get('primary_drug', 'N/A')}\n"
-            result += f"- **MoA:** {trial.get('primary_drug_moa', 'N/A')}\n"
-            result += f"- **Target:** {trial.get('primary_drug_target', 'N/A')}\n"
-            result += f"- **Modality:** {trial.get('primary_drug_modality', 'N/A')}\n"
-            result += f"- **Route:** {trial.get('primary_drug_roa', 'N/A')}\n"
-            
-            # Clinical information section
-            result += "\n## Clinical Information\n"
-            result += f"- **Indication:** {trial.get('indication', 'N/A')}\n"
-            result += f"- **Line of Therapy:** {trial.get('line_of_therapy', 'N/A')}\n"
-            result += f"- **Patient Population:** {trial.get('patient_population', 'N/A')}\n"
-            
-            return result
-    
-    async def _compare_trials(self, arguments: Dict[str, Any]) -> str:
-        """
-        Compare multiple clinical trials side by side
-        
-        Creates a comparison table or JSON output showing differences between trials
-        across specified fields.
-        
-        Args:
-            arguments: Dictionary containing:
-                - nct_ids: List of NCT IDs to compare
-                - fields: List of fields to compare (default: key fields)
-                - format: Output format (table, json)
-                
-        Returns:
-            str: Formatted comparison results
-        """
-        nct_ids = arguments["nct_ids"]
-        fields = arguments.get("fields", [])
-        format_type = arguments.get("format", "table")
-        
-        # Validate input
-        if len(nct_ids) < 2:
-            return "Please provide at least 2 NCT IDs to compare."
-        
-        # Retrieve trial data for all specified NCT IDs
-        trials = []
-        for nct_id in nct_ids:
+        try:
             trial = self.db.get_trial_by_nct_id(nct_id)
-            if trial:
-                trials.append(trial)
-            else:
+            if not trial:
                 return f"Trial {nct_id} not found in database."
-        
-        # Return JSON format if requested
-        if format_type == "json":
-            return json.dumps(trials, indent=2)
-        else:
-            # Create comparison table
-            if not fields:
-                # Default fields for comparison
-                fields = [
-                    "nct_id", "trial_name", "trial_phase", "trial_status", 
-                    "primary_drug", "primary_drug_moa", "indication", 
-                    "line_of_therapy", "sponsor", "patient_enrollment"
-                ]
             
-            # Build comparison table
-            result = "## Trial Comparison\n\n"
-            result += "| Field | " + " | ".join([f"**{nct_id}**" for nct_id in nct_ids]) + " |\n"
-            result += "|-------|" + "|".join(["---" for _ in nct_ids]) + "|\n"
-            
-            # Add each field as a row
-            for field in fields:
-                values = []
-                for trial in trials:
-                    value = trial.get(field, "N/A")
-                    # Truncate long values for table display
-                    if isinstance(value, str) and len(value) > 50:
-                        value = value[:47] + "..."
-                    values.append(str(value))
-                result += f"| {field} | " + " | ".join(values) + " |\n"
-            
-            return result
-    
-    async def _get_trial_statistics(self, arguments: Dict[str, Any]) -> str:
-        """
-        Get statistical information about stored trials
-        
-        Generates summary statistics grouped by various criteria such as phase,
-        status, sponsor, indication, or drug.
-        
-        Args:
-            arguments: Dictionary containing:
-                - group_by: Field to group statistics by
-                - include_charts: Whether to include chart data
-                
-        Returns:
-            str: Formatted statistics
-        """
-        group_by = arguments.get("group_by", "phase")
-        include_charts = arguments.get("include_charts", True)
-        
-        # Retrieve all trials from database
-        all_trials = self.db.search_trials({}, 1000)
-        
-        if not all_trials:
-            return "No trials found in database."
-        
-        # Create pandas DataFrame for statistical analysis
-        df = pd.DataFrame(all_trials)
-        
-        # Generate statistics based on grouping field
-        if group_by == "phase":
-            stats = df["trial_phase"].value_counts()
-        elif group_by == "status":
-            stats = df["trial_status"].value_counts()
-        elif group_by == "sponsor":
-            stats = df["sponsor"].value_counts().head(10)  # Top 10 sponsors
-        elif group_by == "indication":
-            stats = df["indication"].value_counts().head(10)  # Top 10 indications
-        elif group_by == "primary_drug":
-            stats = df["primary_drug"].value_counts().head(10)  # Top 10 drugs
-        else:
-            return f"Invalid group_by field: {group_by}"
-        
-        # Format statistics as markdown table
-        result = f"## Trial Statistics (Grouped by {group_by})\n\n"
-        result += "| Category | Count |\n"
-        result += "|----------|-------|\n"
-        
-        for category, count in stats.items():
-            result += f"| {category} | {count} |\n"
-        
-        # Add summary information
-        result += f"\n**Total Trials:** {len(all_trials)}\n"
-        result += f"**Unique {group_by.title()}s:** {len(stats)}\n"
-        
-        return result
-    
-    async def _analyze_trial_with_model(self, arguments: Dict[str, Any]) -> str:
-        """
-        Analyze a trial with a specific AI model and store results
-        
-        This method allows re-analysis of trials with different AI models or
-        analysis of new trials with specified models.
-        
-        Args:
-            arguments: Dictionary containing:
-                - nct_id: NCT ID of the trial
-                - model: AI model to use for analysis
-                - json_file_path: Optional path to JSON file
-                
-        Returns:
-            str: Analysis result message
-        """
-        nct_id = arguments["nct_id"]
-        model = arguments["model"]
-        json_file_path = arguments.get("json_file_path")
-        
-        # Get or create AI analyzer for the specified model
-        if model not in self.analyzers:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return "Error: OPENAI_API_KEY not found in environment"
-            
-            # Initialize appropriate analyzer
-            if model == "llm":
-                self.analyzers[model] = ClinicalTrialAnalyzerLLM(api_key)
+            if include_raw_data:
+                return json.dumps(trial, indent=2)
             else:
-                self.analyzers[model] = ClinicalTrialAnalyzerReasoning(api_key, model=model)
-        
-        analyzer = self.analyzers[model]
-        
-        # Perform analysis
-        try:
-            result = analyzer.analyze_trial(nct_id, json_file_path)
-            if "error" in result:
-                return f"Error analyzing trial {nct_id}: {result['error']}"
-            
-            # Store results in database with metadata
-            success = self.db.store_trial_data(result, {
-                "analysis_model": model,
-                "analysis_timestamp": datetime.now().isoformat(),
-                "source_file": json_file_path
-            })
-            
-            if success:
-                return f"✅ Successfully analyzed and stored trial {nct_id} using {model} model"
-            else:
-                return f"❌ Failed to store trial {nct_id}"
+                # Format as readable text
+                result = f"# Trial Details: {nct_id}\n\n"
+                result += "## Basic Information\n"
+                result += f"- **Trial Name:** {trial.get('trial_name', 'N/A')}\n"
+                result += f"- **Phase:** {trial.get('trial_phase', 'N/A')}\n"
+                result += f"- **Status:** {trial.get('trial_status', 'N/A')}\n"
+                result += f"- **Enrollment:** {trial.get('patient_enrollment', 'N/A')}\n"
+                result += f"- **Sponsor:** {trial.get('sponsor', 'N/A')}\n"
+                
+                result += "\n## Drug Information\n"
+                result += f"- **Primary Drug:** {trial.get('primary_drug', 'N/A')}\n"
+                result += f"- **MoA:** {trial.get('primary_drug_moa', 'N/A')}\n"
+                result += f"- **Target:** {trial.get('primary_drug_target', 'N/A')}\n"
+                
+                result += "\n## Clinical Information\n"
+                result += f"- **Indication:** {trial.get('indication', 'N/A')}\n"
+                result += f"- **Line of Therapy:** {trial.get('line_of_therapy', 'N/A')}\n"
+                result += f"- **Patient Population:** {trial.get('patient_population', 'N/A')}\n"
+                
+                return result
                 
         except Exception as e:
-            return f"Error processing trial {nct_id}: {str(e)}"
-    
-    async def _get_available_columns(self, arguments: Dict[str, Any]) -> str:
-        """
-        Get list of available columns in the database
-        
-        Provides schema information for database tables, useful for understanding
-        what data is available and how it's structured.
-        
-        Args:
-            arguments: Dictionary containing:
-                - table: Table name to get columns for
-                
-        Returns:
-            str: Formatted column information
-        """
-        table = arguments.get("table", "clinical_trials")
-        
-        try:
-            # Query database schema information
-            cursor = self.db.connection.cursor()
-            cursor.execute(f"PRAGMA table_info({table})")
-            columns = cursor.fetchall()
-            
-            # Format as markdown table
-            result = f"## Available Columns in {table}\n\n"
-            result += "| Column | Type | Not Null | Default | Primary Key |\n"
-            result += "|--------|------|----------|---------|-------------|\n"
-            
-            for col in columns:
-                result += f"| {col[1]} | {col[2]} | {col[3]} | {col[4] or 'NULL'} | {col[5]} |\n"
-            
-            return result
-            
-        except Exception as e:
-            return f"Error getting column information: {str(e)}"
-    
-    async def _export_trials(self, arguments: Dict[str, Any]) -> str:
-        """
-        Export trials to CSV or JSON format
-        
-        Allows bulk export of trial data for external analysis or reporting.
-        
-        Args:
-            arguments: Dictionary containing:
-                - format: Export format (csv, json)
-                - filters: Optional filters to apply
-                - filename: Output filename
-                
-        Returns:
-            str: Export result message
-        """
-        format_type = arguments.get("format", "csv")
-        filters = arguments.get("filters", {})
-        filename = arguments.get("filename")
-        
-        # Get trials based on filters
-        trials = self.db.search_trials(filters, 1000)
-        
-        if not trials:
-            return "No trials found to export."
-        
-        # Generate filename if not provided
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"clinical_trials_export_{timestamp}.{format_type}"
-        
-        try:
-            # Export based on format
-            if format_type == "csv":
-                df = pd.DataFrame(trials)
-                df.to_csv(filename, index=False)
-            else:  # json format
-                with open(filename, 'w') as f:
-                    json.dump(trials, f, indent=2)
-            
-            return f"✅ Successfully exported {len(trials)} trials to {filename}"
-            
-        except Exception as e:
-            return f"Error exporting trials: {str(e)}"
-    
-    async def _get_trials_by_drug(self, arguments: Dict[str, Any]) -> str:
-        """
-        Find all trials for a specific drug
-        
-        Specialized search function for drug-specific queries.
-        
-        Args:
-            arguments: Dictionary containing:
-                - drug_name: Name of the drug to search for
-                - include_similar: Whether to include similar drug names
-                - limit: Maximum number of results
-                
-        Returns:
-            str: Formatted trial results
-        """
-        drug_name = arguments["drug_name"]
-        include_similar = arguments.get("include_similar", True)
-        limit = arguments.get("limit", 20)
-        
-        # Build search filter
-        filters = {"primary_drug": drug_name}
-        
-        # TODO: Implement fuzzy matching for similar drug names
-        if include_similar:
-            # This would need more sophisticated fuzzy matching
-            # For now, just search for the exact drug name
-            pass
-        
-        # Execute search
-        results = self.db.search_trials(filters, limit)
-        
-        if not results:
-            return f"No trials found for drug: {drug_name}"
-        
-        return self._format_table(results)
-    
-    async def _get_trials_by_indication(self, arguments: Dict[str, Any]) -> str:
-        """
-        Find all trials for a specific indication (disease)
-        
-        Specialized search function for indication-specific queries.
-        
-        Args:
-            arguments: Dictionary containing:
-                - indication: Disease indication to search for
-                - include_similar: Whether to include similar indications
-                - limit: Maximum number of results
-                
-        Returns:
-            str: Formatted trial results
-        """
-        indication = arguments["indication"]
-        include_similar = arguments.get("include_similar", True)
-        limit = arguments.get("limit", 20)
-        
-        # Build search filter
-        filters = {"indication": indication}
-        
-        # TODO: Implement fuzzy matching for similar indications
-        if include_similar:
-            # This would need more sophisticated fuzzy matching
-            # For now, just search for the exact indication
-            pass
-        
-        # Execute search
-        results = self.db.search_trials(filters, limit)
-        
-        if not results:
-            return f"No trials found for indication: {indication}"
-        
-        return self._format_table(results)
+            raise DatabaseError(f"Failed to get trial details: {str(e)}")
     
     async def _smart_search(self, arguments: Dict[str, Any]) -> str:
-        """
-        Intelligent search that interprets natural language queries
-        
-        Advanced search function that parses natural language queries and
-        converts them to structured database searches.
-        
-        Args:
-            arguments: Dictionary containing:
-                - query: Natural language search query
-                - limit: Maximum number of results
-                - format: Output format
-                
-        Returns:
-            str: Formatted search results
-        """
+        """Intelligent search with natural language processing"""
         query = arguments["query"]
         limit = arguments.get("limit", 10)
         format_type = arguments.get("format", "table")
         
-        # Parse natural language query to extract structured filters
-        filters = {}
-        
-        # Extract drug information from query
-        if "semaglutide" in query.lower():
-            filters["primary_drug"] = "semaglutide"
-        elif "ozempic" in query.lower():
-            filters["primary_drug"] = "semaglutide"  # Ozempic is semaglutide
-        
-        # Extract indication information
-        if "diabetes" in query.lower():
-            filters["indication"] = "diabetes"
-        elif "cancer" in query.lower():
-            filters["indication"] = "cancer"
-        
-        # Extract trial phase information
-        if "phase 1" in query.lower() or "phase i" in query.lower():
-            filters["trial_phase"] = "PHASE1"
-        elif "phase 2" in query.lower() or "phase ii" in query.lower():
-            filters["trial_phase"] = "PHASE2"
-        elif "phase 3" in query.lower() or "phase iii" in query.lower():
-            filters["trial_phase"] = "PHASE3"
-        
-        # Extract trial status information
-        if "recruiting" in query.lower():
-            filters["trial_status"] = "RECRUITING"
-        elif "completed" in query.lower():
-            filters["trial_status"] = "COMPLETED"
-        
-        # Execute search with extracted filters
-        results = self.db.search_trials(filters, limit)
-        
-        if not results:
-            return f"No trials found matching: {query}"
-        
-        # Format results based on requested format
-        if format_type == "json":
-            return json.dumps(results, indent=2)
-        elif format_type == "summary":
-            return self._format_summary(results)
-        else:  # table format
-            return self._format_table(results)
-    
-    async def _reasoning_query(self, arguments: Dict[str, Any]) -> str:
-        """
-        Advanced reasoning-based query using reasoning models for complex clinical trial questions.
-        
-        This tool interprets natural language queries and uses reasoning models
-        to extract structured filters and perform more sophisticated searches.
-        
-        Args:
-            arguments: Dictionary containing:
-                - query: Complex natural language query requiring reasoning
-                - reasoning_model: Reasoning model to use for query interpretation
-                - include_analysis: Whether to include AI analysis and insights
-                - limit: Maximum number of results
-                - format: Output format (detailed, summary, analysis)
-                
-        Returns:
-            str: Formatted analysis result
-        """
-        query = arguments["query"]
-        reasoning_model = arguments.get("reasoning_model", "gpt-4o")
-        include_analysis = arguments.get("include_analysis", True)
-        limit = arguments.get("limit", 20)
-        format_type = arguments.get("format", "detailed")
-        
-        # Get or create reasoning analyzer
-        if reasoning_model not in self.analyzers:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return "Error: OPENAI_API_KEY not found in environment"
-            
-            self.analyzers[reasoning_model] = ClinicalTrialAnalyzerReasoning(api_key, model=reasoning_model)
-        
-        analyzer = self.analyzers[reasoning_model]
-        
-        # Perform reasoning to extract filters and query intent
         try:
-            analysis_result = analyzer.analyze_query(query)
+            # Parse natural language query
+            filters = await self._parse_natural_language_query(query)
             
-            # Extract structured filters and query intent
-            filters = analysis_result.get("filters", {})
-            query_intent = analysis_result.get("query_intent", "unknown")
-            
-            # Combine natural language query with extracted filters
-            final_query_text = query
-            if filters:
-                final_query_text += " with filters: " + json.dumps(filters)
-            
-            # Execute search with combined filters
+            # Perform search
             results = self.db.search_trials(filters, limit)
             
             if not results:
-                return f"No trials found for query: {final_query_text}"
+                return f"No trials found matching: {query}"
             
-            # Format results based on requested format
-            if format_type == "detailed":
+            # Format results
+            if format_type == "json":
                 return json.dumps(results, indent=2)
             elif format_type == "summary":
                 return self._format_summary(results)
-            else: # analysis format
-                return json.dumps(analysis_result, indent=2)
+            else:  # table format
+                return self._format_table(results)
                 
         except Exception as e:
-            return f"Error processing reasoning query: {str(e)}"
+            raise AnalysisError(f"Smart search failed: {str(e)}")
     
-    async def _compare_analysis(self, arguments: Dict[str, Any]) -> str:
-        """
-        Compare trials based on natural language criteria with AI-powered insights.
-        
-        This tool interprets a natural language description of what to compare
-        and uses reasoning models to find relevant trials and provide insights.
-        
-        Args:
-            arguments: Dictionary containing:
-                - comparison_criteria: Natural language description of what to compare
-                - trial_ids: Optional specific NCT IDs to compare
-                - auto_find_similar: Whether to automatically find similar trials if no IDs provided
-                - analysis_depth: Depth of analysis (basic, detailed, expert)
-                
-        Returns:
-            str: Formatted comparison result
-        """
-        comparison_criteria = arguments["comparison_criteria"]
-        trial_ids = arguments.get("trial_ids", [])
-        auto_find_similar = arguments.get("auto_find_similar", True)
-        analysis_depth = arguments.get("analysis_depth", "detailed")
-        
-        # Get or create reasoning analyzer
-        reasoning_model = "o3-mini" # Default reasoning model
-        if analysis_depth == "expert":
-            reasoning_model = "o3" # Use the more powerful o3 model for expert analysis
-        
-        if reasoning_model not in self.analyzers:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return "Error: OPENAI_API_KEY not found in environment"
-            
-            self.analyzers[reasoning_model] = ClinicalTrialAnalyzerReasoning(api_key, model=reasoning_model)
-        
-        analyzer = self.analyzers[reasoning_model]
-        
-        # Perform reasoning to extract filters and query intent
+    async def _parse_natural_language_query(self, query: str) -> Dict[str, Any]:
+        """Use advanced LLM reasoning to intelligently parse natural language query into structured search filters"""
         try:
-            analysis_result = analyzer.analyze_query(comparison_criteria)
+            # Use the reasoning model to understand the query with enhanced prompt
+            analyzer = await self._get_analyzer("o3-mini")
             
-            # Extract structured filters and query intent
-            filters = analysis_result.get("filters", {})
-            query_intent = analysis_result.get("query_intent", "unknown")
+            enhanced_prompt = f"""
+            You are an expert clinical trial search assistant. Analyze this natural language query and extract structured search parameters.
+
+            QUERY: "{query}"
+
+            DATABASE SCHEMA:
+            - nct_id: Trial identifier (e.g., NCT07046273)
+            - trial_name: Full trial name and description
+            - trial_phase: PHASE1, PHASE2, PHASE3, PHASE4, PHASE1/2, PHASE2/3
+            - trial_status: RECRUITING, COMPLETED, TERMINATED, NOT_YET_RECRUITING, ACTIVE_NOT_RECRUITING, SUSPENDED, WITHDRAWN, ENROLLING_BY_INVITATION
+            - sponsor: Company or institution name
+            - primary_drug: Main drug being tested
+            - indication: Disease or condition being treated
+            - line_of_therapy: First line, second line, etc.
+            - patient_enrollment: Number of participants
+            - start_date: Trial start date
+            - primary_completion_date: Expected completion date
+            - primary_endpoints: Main trial objectives
+            - secondary_endpoints: Additional objectives
+            - inclusion_criteria: Patient eligibility criteria
+            - exclusion_criteria: Patient exclusion criteria
+            - trial_countries: Countries where trial is conducted
+            - geography: Global, US, Europe, Asia, etc.
+
+            TASK: Extract search filters from the natural language query. Consider:
+            1. Disease/indication terms (cancer, diabetes, heart disease, etc.)
+            2. Drug names (semaglutide, pembrolizumab, etc.)
+            3. Trial phases (phase 1, phase 2, phase 3, etc.)
+            4. Trial status (recruiting, completed, etc.)
+            5. Sponsor types (industry, academic, government)
+            6. Geographic preferences (US, Europe, global, etc.)
+            7. Patient population (adults, children, specific age groups)
+            8. Treatment lines (first line, second line, etc.)
+            9. Enrollment size preferences (large trials, small trials)
+            10. Time periods (recent trials, ongoing trials)
+
+            RESPONSE FORMAT: Return a JSON object with the following structure:
+            {{
+                "filters": {{
+                    "primary_drug": "extracted drug name or null",
+                    "indication": "extracted disease/indication or null",
+                    "trial_phase": "PHASE1/PHASE2/PHASE3/PHASE4 or null",
+                    "trial_status": "RECRUITING/COMPLETED/etc or null",
+                    "sponsor": "extracted sponsor name or null",
+                    "line_of_therapy": "extracted therapy line or null",
+                    "biomarker": "extracted biomarker terms or null",
+                    "enrollment_min": number or null,
+                    "enrollment_max": number or null,
+                    "geography": "extracted geography or null"
+                }},
+                "query_intent": "Brief description of what the user is looking for",
+                "search_strategy": "How to approach this search",
+                "confidence_score": 0.0-1.0,
+                "extracted_terms": ["list", "of", "key", "terms", "extracted"]
+            }}
+
+            EXAMPLES:
+            Query: "Find Phase 3 trials for metastatic bladder cancer using checkpoint inhibitors"
+            Response: {{
+                "filters": {{
+                    "indication": "metastatic bladder cancer",
+                    "trial_phase": "PHASE3",
+                    "primary_drug": "checkpoint inhibitors"
+                }},
+                "query_intent": "User wants Phase 3 clinical trials for metastatic bladder cancer that use checkpoint inhibitors",
+                "search_strategy": "Search for trials with bladder cancer indication, Phase 3, and checkpoint inhibitor drugs",
+                "confidence_score": 0.95,
+                "extracted_terms": ["phase 3", "metastatic bladder cancer", "checkpoint inhibitors"]
+            }}
+
+            Query: "Show me recruiting diabetes trials with semaglutide in the US"
+            Response: {{
+                "filters": {{
+                    "indication": "diabetes",
+                    "primary_drug": "semaglutide",
+                    "trial_status": "RECRUITING",
+                    "geography": "US"
+                }},
+                "query_intent": "User wants currently recruiting diabetes trials using semaglutide in the United States",
+                "search_strategy": "Search for diabetes trials with semaglutide, recruiting status, and US geography",
+                "confidence_score": 0.92,
+                "extracted_terms": ["diabetes", "semaglutide", "recruiting", "US"]
+            }}
+
+            Query: "Large trials for breast cancer immunotherapy"
+            Response: {{
+                "filters": {{
+                    "indication": "breast cancer",
+                    "primary_drug": "immunotherapy",
+                    "enrollment_min": 100
+                }},
+                "query_intent": "User wants large clinical trials for breast cancer using immunotherapy",
+                "search_strategy": "Search for breast cancer trials with immunotherapy and minimum enrollment of 100",
+                "confidence_score": 0.88,
+                "extracted_terms": ["breast cancer", "immunotherapy", "large trials"]
+            }}
+
+            Now analyze the provided query and return the structured JSON response. Return ONLY the JSON object, no additional text.
+            """
             
-            # Combine natural language query with extracted filters
-            final_query_text = comparison_criteria
-            if filters:
-                final_query_text += " with filters: " + json.dumps(filters)
+            # Get LLM response
+            response = await analyzer.analyze_query(enhanced_prompt)
             
-            # Execute search with combined filters
-            results = self.db.search_trials(filters, 1000) # Fetch all results for comparison
-            
-            if not results:
-                return f"No trials found for query: {final_query_text}"
-            
-            # Format results based on requested format
-            if analysis_depth == "basic":
-                return json.dumps(results, indent=2)
-            elif analysis_depth == "detailed":
-                return json.dumps(analysis_result, indent=2)
-            else: # expert format
-                return json.dumps(analysis_result, indent=2)
+            # Parse the AI response
+            try:
+                import json
+                result = json.loads(response)
+                
+                # Validate the result structure
+                if not isinstance(result, dict):
+                    raise ValueError("Response is not a dictionary")
+                
+                # Ensure filters key exists
+                if "filters" not in result:
+                    result["filters"] = {}
+                
+                # Clean up the filters - remove None values
+                result["filters"] = {k: v for k, v in result["filters"].items() if v is not None}
+                
+                logger.info(f"LLM parsed query '{query}' into filters: {result['filters']}")
+                return result
+                
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                logger.warning(f"Failed to parse LLM response for query '{query}': {e}")
+                logger.warning(f"Raw response: {response}")
+                # Fallback to enhanced string-based parsing
+                return self._enhanced_fallback_parsing(query)
                 
         except Exception as e:
-            return f"Error processing compare analysis: {str(e)}"
+            logger.error(f"LLM query parsing failed for '{query}': {e}")
+            # Fallback to enhanced string-based parsing
+            return self._enhanced_fallback_parsing(query)
     
-    async def _trend_analysis(self, arguments: Dict[str, Any]) -> str:
-        """
-        Analyze trends and patterns in clinical trials using natural language queries.
+    def _enhanced_fallback_parsing(self, query: str) -> Dict[str, Any]:
+        """Enhanced fallback method for query parsing using advanced string processing"""
+        import re
         
-        This tool interprets a natural language description of trends to analyze
-        and uses reasoning models to extract relevant data and provide insights.
+        filters = {}
+        query_lower = query.lower()
         
-        Args:
-            arguments: Dictionary containing:
-                - trend_query: Natural language description of trends to analyze
-                - time_period: Time period for analysis (e.g., 'last 5 years', '2020-2024')
-                - group_by: Field to group analysis by (drug, indication, phase, sponsor, geography)
-                - include_insights: Whether to include AI insights
-                
-        Returns:
-            str: Formatted trend analysis result
-        """
-        trend_query = arguments["trend_query"]
-        time_period = arguments.get("time_period", "last 5 years")
-        group_by = arguments.get("group_by", "drug")
-        include_insights = arguments.get("include_insights", True)
+        # Enhanced disease/indication extraction
+        disease_patterns = {
+            "diabetes": ["diabetes", "diabetic", "t2dm", "type 2 diabetes"],
+            "cancer": ["cancer", "oncology", "tumor", "malignant", "carcinoma", "sarcoma", "leukemia", "lymphoma"],
+            "breast cancer": ["breast cancer", "mammary cancer"],
+            "lung cancer": ["lung cancer", "pulmonary cancer", "non-small cell", "nsclc", "small cell", "sclc"],
+            "bladder cancer": ["bladder cancer", "urothelial cancer", "urothelial carcinoma"],
+            "prostate cancer": ["prostate cancer", "prostatic cancer"],
+            "colorectal cancer": ["colorectal cancer", "colon cancer", "rectal cancer"],
+            "pancreatic cancer": ["pancreatic cancer", "pancreas cancer"],
+            "ovarian cancer": ["ovarian cancer", "ovary cancer"],
+            "melanoma": ["melanoma", "skin cancer"],
+            "leukemia": ["leukemia", "aml", "all", "cll", "cml"],
+            "lymphoma": ["lymphoma", "hodgkin", "non-hodgkin", "nhl"],
+            "heart disease": ["heart disease", "cardiovascular", "cardiac", "coronary"],
+            "kidney disease": ["kidney disease", "renal", "nephropathy"],
+            "liver disease": ["liver disease", "hepatic", "hepatitis"],
+            "alzheimer": ["alzheimer", "dementia", "cognitive"],
+            "parkinson": ["parkinson", "parkinson's"],
+            "multiple sclerosis": ["multiple sclerosis", "ms"],
+            "rheumatoid arthritis": ["rheumatoid arthritis", "ra"],
+            "psoriasis": ["psoriasis", "psoriatic"],
+            "asthma": ["asthma", "asthmatic"],
+            "copd": ["copd", "chronic obstructive"],
+            "fibrosis": ["fibrosis", "pulmonary fibrosis", "cystic fibrosis"],
+            "sickle cell": ["sickle cell", "sickle cell anemia"],
+            "hemophilia": ["hemophilia", "hemophiliac"]
+        }
         
-        # Get or create reasoning analyzer
-        reasoning_model = "o3-mini" # Default reasoning model
-        if group_by == "expert":
-            reasoning_model = "o3" # Use the more powerful o3 model for expert analysis
+        for disease, patterns in disease_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["indication"] = disease
+                break
         
-        if reasoning_model not in self.analyzers:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                return "Error: OPENAI_API_KEY not found in environment"
-            
-            self.analyzers[reasoning_model] = ClinicalTrialAnalyzerReasoning(api_key, model=reasoning_model)
+        # Enhanced drug extraction
+        drug_patterns = {
+            "semaglutide": ["semaglutide", "ozempic", "wegovy", "rybelsus"],
+            "pembrolizumab": ["pembrolizumab", "keytruda"],
+            "nivolumab": ["nivolumab", "opdivo"],
+            "atezolizumab": ["atezolizumab", "tecentriq"],
+            "durvalumab": ["durvalumab", "imfinzi"],
+            "avelumab": ["avelumab", "bavencio"],
+            "tremelimumab": ["tremelimumab"],
+            "ipilimumab": ["ipilimumab", "yervoy"],
+            "trastuzumab": ["trastuzumab", "herceptin"],
+            "bevacizumab": ["bevacizumab", "avastin"],
+            "cetuximab": ["cetuximab", "erbitux"],
+            "panitumumab": ["panitumumab", "vectibix"],
+            "rituximab": ["rituximab", "rituxan"],
+            "obinutuzumab": ["obinutuzumab", "gazyva"],
+            "daratumumab": ["daratumumab", "darzalex"],
+            "elotuzumab": ["elotuzumab", "emplicti"],
+            "brentuximab": ["brentuximab", "adcetris"],
+            "polatuzumab": ["polatuzumab", "polivy"],
+            "enfortumab": ["enfortumab", "padcev"],
+            "sacituzumab": ["sacituzumab", "trodelvy"],
+            "tisotumab": ["tisotumab", "tivdak"],
+            "mirvetuximab": ["mirvetuximab", "elahere"],
+            "checkpoint inhibitors": ["checkpoint inhibitor", "pdl1", "pd-l1", "pd1", "pd-1", "ctla4", "ctla-4"],
+            "immunotherapy": ["immunotherapy", "immune therapy", "immune checkpoint"],
+            "adc": ["adc", "antibody drug conjugate", "antibody-drug conjugate"],
+            "car-t": ["car-t", "car t", "chimeric antigen receptor"],
+            "bispecific": ["bispecific", "bi-specific", "dual targeting"],
+            "adc": ["adc", "antibody drug conjugate", "antibody-drug conjugate"],
+            "vaccine": ["vaccine", "vaccination"],
+            "hormone therapy": ["hormone therapy", "hormonal therapy", "endocrine therapy"],
+            "chemotherapy": ["chemotherapy", "chemo", "cytotoxic"],
+            "targeted therapy": ["targeted therapy", "targeted treatment", "precision medicine"],
+            "gene therapy": ["gene therapy", "gene editing", "crispr"],
+            "cell therapy": ["cell therapy", "stem cell", "cellular therapy"]
+        }
         
-        analyzer = self.analyzers[reasoning_model]
+        for drug, patterns in drug_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["primary_drug"] = drug
+                break
         
-        # Perform reasoning to extract filters and query intent
-        try:
-            analysis_result = analyzer.analyze_query(trend_query)
-            
-            # Extract structured filters and query intent
-            filters = analysis_result.get("filters", {})
-            query_intent = analysis_result.get("query_intent", "unknown")
-            
-            # Combine natural language query with extracted filters
-            final_query_text = trend_query
-            if filters:
-                final_query_text += " with filters: " + json.dumps(filters)
-            
-            # Execute search with combined filters
-            results = self.db.search_trials(filters, 1000) # Fetch all results for trend analysis
-            
-            if not results:
-                return f"No trials found for query: {final_query_text}"
-            
-            # Format results based on requested format
-            if include_insights:
-                return json.dumps(analysis_result, indent=2)
-            else:
-                return json.dumps(results, indent=2)
-                
-        except Exception as e:
-            return f"Error processing trend analysis: {str(e)}"
+        # Enhanced phase extraction
+        phase_patterns = {
+            "PHASE1": ["phase 1", "phase i", "phase1", "phasei"],
+            "PHASE2": ["phase 2", "phase ii", "phase2", "phaseii"],
+            "PHASE3": ["phase 3", "phase iii", "phase3", "phaseiii"],
+            "PHASE4": ["phase 4", "phase iv", "phase4", "phaseiv"],
+            "PHASE1/2": ["phase 1/2", "phase i/ii", "phase1/2", "phasei/ii"],
+            "PHASE2/3": ["phase 2/3", "phase ii/iii", "phase2/3", "phaseii/iii"]
+        }
+        
+        for phase, patterns in phase_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["trial_phase"] = phase
+                break
+        
+        # Enhanced status extraction
+        status_patterns = {
+            "RECRUITING": ["recruiting", "enrolling", "open", "active", "currently recruiting"],
+            "COMPLETED": ["completed", "finished", "done", "concluded"],
+            "TERMINATED": ["terminated", "stopped", "discontinued", "cancelled"],
+            "NOT_YET_RECRUITING": ["not yet recruiting", "not recruiting yet", "planning"],
+            "ACTIVE_NOT_RECRUITING": ["active not recruiting", "active but not recruiting"],
+            "SUSPENDED": ["suspended", "on hold", "paused"],
+            "WITHDRAWN": ["withdrawn", "withdrew", "cancelled"],
+            "ENROLLING_BY_INVITATION": ["enrolling by invitation", "invitation only"]
+        }
+        
+        for status, patterns in status_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["trial_status"] = status
+                break
+        
+        # Geographic extraction
+        geo_patterns = {
+            "US": ["us", "united states", "usa", "america", "american"],
+            "Europe": ["europe", "european", "eu", "european union"],
+            "Asia": ["asia", "asian", "china", "japan", "korea"],
+            "Global": ["global", "worldwide", "international", "multi-national"]
+        }
+        
+        for geo, patterns in geo_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["geography"] = geo
+                break
+        
+        # Enrollment size extraction
+        enrollment_patterns = {
+            "large": ["large", "big", "major", "extensive"],
+            "small": ["small", "minor", "limited", "pilot"],
+            "medium": ["medium", "moderate", "standard"]
+        }
+        
+        for size, patterns in enrollment_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                if size == "large":
+                    filters["enrollment_min"] = 100
+                elif size == "small":
+                    filters["enrollment_max"] = 50
+                break
+        
+        # Numeric enrollment extraction
+        enrollment_numbers = re.findall(r'(\d+)\s*(?:patients?|participants?|subjects?)', query_lower)
+        if enrollment_numbers:
+            try:
+                number = int(enrollment_numbers[0])
+                if "minimum" in query_lower or "at least" in query_lower:
+                    filters["enrollment_min"] = number
+                elif "maximum" in query_lower or "up to" in query_lower:
+                    filters["enrollment_max"] = number
+                else:
+                    # Default to minimum if no context
+                    filters["enrollment_min"] = number
+            except ValueError:
+                pass
+        
+        # Line of therapy extraction
+        therapy_patterns = {
+            "first line": ["first line", "1st line", "initial", "primary"],
+            "second line": ["second line", "2nd line", "secondary"],
+            "third line": ["third line", "3rd line", "tertiary"],
+            "maintenance": ["maintenance", "maintenance therapy"],
+            "adjuvant": ["adjuvant", "adjuvant therapy"],
+            "neoadjuvant": ["neoadjuvant", "neoadjuvant therapy"]
+        }
+        
+        for therapy, patterns in therapy_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["line_of_therapy"] = therapy
+                break
+        
+        # Sponsor type extraction
+        sponsor_patterns = {
+            "industry": ["industry", "pharmaceutical", "pharma", "biotech", "biotechnology", "company", "corporate"],
+            "academic": ["academic", "university", "medical center", "hospital", "institution"],
+            "government": ["government", "federal", "national", "public"]
+        }
+        
+        for sponsor_type, patterns in sponsor_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                filters["sponsor"] = sponsor_type
+                break
+        
+        # Time period extraction
+        time_patterns = {
+            "recent": ["recent", "latest", "new", "current", "ongoing"],
+            "completed": ["completed", "finished", "past", "historical"],
+            "upcoming": ["upcoming", "future", "planned", "scheduled"]
+        }
+        
+        for time_period, patterns in time_patterns.items():
+            if any(pattern in query_lower for pattern in patterns):
+                if time_period == "recent":
+                    filters["trial_status"] = "RECRUITING"
+                elif time_period == "completed":
+                    filters["trial_status"] = "COMPLETED"
+                break
+        
+        # Create structured result
+        result = {
+            "filters": filters,
+            "query_intent": f"User is searching for clinical trials matching: {query}",
+            "search_strategy": f"Apply extracted filters: {list(filters.keys())}",
+            "confidence_score": 0.7 if filters else 0.3,
+            "extracted_terms": list(filters.values()) if filters else []
+        }
+        
+        logger.info(f"Enhanced fallback parsed query '{query}' into: {result}")
+        return result
     
     def _format_table(self, results: List[Dict[str, Any]]) -> str:
-        """
-        Format search results as a markdown table
-        
-        Creates a readable table format for displaying trial search results
-        with key fields and truncated long values.
-        
-        Args:
-            results: List of trial dictionaries
-            
-        Returns:
-            str: Formatted markdown table
-        """
+        """Format results as a markdown table"""
         if not results:
             return "No results found."
         
-        # Get all unique keys from results
-        all_keys = set()
-        for result in results:
-            all_keys.update(result.keys())
+        # Select key fields for display
+        key_fields = ["nct_id", "trial_name", "trial_phase", "trial_status", "primary_drug", "indication"]
+        display_fields = [field for field in key_fields if any(field in result for result in results)]
         
-        # Select key fields for display (prioritize important fields)
-        key_fields = [
-            "nct_id", "trial_name", "trial_phase", "trial_status", 
-            "primary_drug", "indication", "sponsor", "patient_enrollment"
-        ]
-        
-        # Filter to only include fields that exist in the data
-        display_fields = [field for field in key_fields if field in all_keys]
-        
-        # Build table header
         result = f"## Found {len(results)} trials\n\n"
         result += "| " + " | ".join(display_fields) + " |\n"
         result += "|" + "|".join(["---" for _ in display_fields]) + "|\n"
         
-        # Add data rows
         for trial in results:
             row = []
             for field in display_fields:
                 value = trial.get(field, "N/A")
-                # Truncate long values for better table display
                 if isinstance(value, str) and len(value) > 30:
                     value = value[:27] + "..."
                 row.append(str(value))
@@ -1221,24 +889,13 @@ class ClinicalTrialMCPServer:
         return result
     
     def _format_summary(self, results: List[Dict[str, Any]]) -> str:
-        """
-        Format search results as a summary with statistics
-        
-        Creates a summary view showing counts by various categories
-        instead of detailed trial information.
-        
-        Args:
-            results: List of trial dictionaries
-            
-        Returns:
-            str: Formatted summary with statistics
-        """
+        """Format results as a summary"""
         if not results:
             return "No results found."
         
         result = f"## Summary: {len(results)} trials found\n\n"
         
-        # Count trials by phase
+        # Count by phase
         phases = {}
         for trial in results:
             phase = trial.get("trial_phase", "Unknown")
@@ -1248,46 +905,16 @@ class ClinicalTrialMCPServer:
         for phase, count in phases.items():
             result += f"- {phase}: {count} trials\n"
         
-        # Count trials by status
-        statuses = {}
-        for trial in results:
-            status = trial.get("trial_status", "Unknown")
-            statuses[status] = statuses.get(status, 0) + 1
-        
-        result += "\n### By Status:\n"
-        for status, count in statuses.items():
-            result += f"- {status}: {count} trials\n"
-        
-        # Count trials by drug (top drugs)
-        drugs = {}
-        for trial in results:
-            drug = trial.get("primary_drug", "Unknown")
-            if drug != "Unknown":
-                drugs[drug] = drugs.get(drug, 0) + 1
-        
-        if drugs:
-            result += "\n### Top Drugs:\n"
-            # Sort by count and take top 5
-            sorted_drugs = sorted(drugs.items(), key=lambda x: x[1], reverse=True)[:5]
-            for drug, count in sorted_drugs:
-                result += f"- {drug}: {count} trials\n"
-        
         return result
     
     async def run(self):
-        """
-        Run the MCP server using stdio transport
-        
-        This method starts the MCP server and handles communication with AI clients
-        through standard input/output streams. It sets up the server with proper
-        initialization options and capabilities.
-        """
+        """Run the MCP server"""
         async with stdio_server() as (read_stream, write_stream):
             await self.server.run(
                 read_stream,
                 write_stream,
                 InitializationOptions(
-                    server_name="clinical-trial-mcp-server",
+                    server_name="clinical-trial-mcp-server-fixed",
                     server_version="1.0.0",
                     capabilities=self.server.get_capabilities(
                         notification_options=None,
@@ -1297,45 +924,27 @@ class ClinicalTrialMCPServer:
             )
 
 def main():
-    """
-    Main function to run the MCP server
-    
-    This is the entry point for running the MCP server as a standalone process.
-    It initializes the server, displays available tools, and handles graceful shutdown.
-    """
-    # Create and initialize the MCP server
-    server = ClinicalTrialMCPServer()
-    
-    # Display server information and available tools
-    print("🏥 Clinical Trial MCP Server")
-    print("=" * 50)
-    print("Starting MCP server...")
-    print("Available tools:")
-    print("- store_trial: Store clinical trials")
-    print("- search_trials: Search with filters")
-    print("- get_trial_details: Get trial details")
-    print("- compare_trials: Compare multiple trials")
-    print("- get_trial_statistics: Get statistics")
-    print("- analyze_trial_with_model: Analyze with specific model")
-    print("- get_available_columns: List database columns")
-    print("- export_trials: Export to CSV/JSON")
-    print("- get_trials_by_drug: Find trials by drug")
-    print("- get_trials_by_indication: Find trials by indication")
-    print("- smart_search: Natural language search")
-    print("- reasoning_query: Advanced reasoning-based queries")
-    print("- compare_analysis: AI-powered trial comparison")
-    print("- trend_analysis: Trend and pattern analysis")
-    print("=" * 50)
-    
+    """Main function to run the MCP server"""
     try:
-        # Start the server and run until interrupted
+        server = ClinicalTrialMCPServer()
+        
+        print("🏥 Clinical Trial MCP Server - Fixed Version")
+        print("=" * 50)
+        print("Starting MCP server...")
+        print("Available tools:")
+        print("- store_trial: Store clinical trials")
+        print("- search_trials: Search with filters")
+        print("- get_trial_details: Get trial details")
+        print("- smart_search: Natural language search")
+        print("=" * 50)
+        
         asyncio.run(server.run())
-    except KeyboardInterrupt:
-        # Handle graceful shutdown on Ctrl+C
-        print("\nServer stopped by user")
+        
+    except ImportError as e:
+        print(f"❌ Import Error: {e}")
+        print("Please ensure all required modules are available.")
     except Exception as e:
-        # Handle and log any server errors
-        print(f"Server error: {e}")
+        print(f"❌ Server Error: {e}")
         logger.error(f"Server error: {e}")
 
 if __name__ == "__main__":
