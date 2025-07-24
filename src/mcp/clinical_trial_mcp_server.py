@@ -535,7 +535,8 @@ class ClinicalTrialMCPServer:
         """Perform the actual search operation using AI-driven query understanding"""
         # Use AI to parse the natural language query
         if query:
-            ai_filters = await self._parse_natural_language_query(query)
+            ai_result = await self._parse_natural_language_query(query)
+            ai_filters = ai_result.get("filters", {})
             # Merge AI-generated filters with explicit filters
             search_filters = {**ai_filters, **filters}
         else:
@@ -586,7 +587,8 @@ class ClinicalTrialMCPServer:
         format_type = arguments.get("format", "table")
         try:
             # Parse natural language query
-            filters = await self._parse_natural_language_query(query)
+            ai_result = await self._parse_natural_language_query(query)
+            filters = ai_result.get("filters", {})
             # Perform search
             results = self.db.search_trials(filters, limit)
             if not results:
