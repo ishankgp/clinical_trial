@@ -10,6 +10,7 @@ A comprehensive AI-powered system for analyzing clinical trials using OpenAI's r
 - **Web Interface**: Streamlit-based UI for easy interaction
 - **Database Management**: SQLite database for storing and querying trial data
 - **Advanced Analysis**: Multi-model analysis with reasoning capabilities
+- **Enhanced LLM Query Processing**: Sophisticated LLM-based query parsing with robust fallback logic for synonyms, brand names, and multi-term queries
 
 ## 🏗️ Architecture
 
@@ -104,12 +105,30 @@ python main.py test-mcp-query
 python main.py test-mcp-chat
 ```
 
+## 🧠 Consistent Query Logic Across CLI and UI
+
+Both the **MCP chat CLI** (`python src/mcp/clinical_trial_chat_mcp.py`) and the **Streamlit UI** (MCP Chat tab) use the **same backend logic and database** for clinical trial queries. This ensures that:
+- All advanced queries (natural language, smart search, statistics, etc.) are powered by the same MCP server and database.
+- Results are consistent between the CLI and UI, provided both are using the same working directory and environment.
+
+If you see different results between the CLI and UI:
+- **Check that both are using the same `clinical_trials.db` file.**
+- Ensure there are no duplicate database files in different folders.
+- Confirm both are running in the same Python environment.
+
+---
+
 ## 🤖 AI Features
 
 ### Reasoning Models
 - **o3-mini**: Default reasoning model for complex analysis
 - **o3**: Advanced reasoning for detailed insights
 - **o4-mini**: Latest reasoning capabilities
+
+### Enhanced LLM-Based Query Processing
+- Natural language queries are parsed using advanced LLM reasoning (see `docs/ENHANCED_LLM_QUERY_PROCESSING.md`).
+- The system can extract multiple synonyms, brand names, and related terms for each filter (e.g., "semaglutide", "Ozempic", "Wegovy").
+- Robust fallback logic ensures queries work even if the LLM is unavailable.
 
 ### Natural Language Understanding
 The system uses AI to understand complex queries:
@@ -145,105 +164,30 @@ CREATE TABLE clinical_trials (
 );
 ```
 
+## 🛠️ Troubleshooting UI/CLI Result Mismatches
+
+If you notice that the Streamlit UI and the CLI chat assistant show different results for the same query:
+
+1. **Check Database Path Consistency**
+   - Both the CLI and UI should use the same `clinical_trials.db` file (default in project root).
+   - If you have multiple `.db` files, results may differ.
+
+2. **Check Python Environment**
+   - Ensure both are running in the same Python environment (check with `which python` or `pip list`).
+
+3. **Check Working Directory**
+   - Run both from the project root to avoid path issues.
+
+4. **Check for Recent Data Population**
+   - If you just populated the database, restart the UI to refresh its view.
+
+5. **Check for UI Tab Differences**
+   - Only the "MCP Chat" tab uses the full MCP backend. Other tabs may use direct analysis and not query the database.
+
+---
+
 ## 🔧 Configuration
 
 ### Environment Variables
 - `OPENAI_API_KEY`: Your OpenAI API key
-- `DATABASE_PATH`: Path to SQLite database (default: clinical_trials.db)
-- `CACHE_DIR`: Cache directory for API responses
-
-### Model Configuration
-- Default reasoning model: `o3-mini`
-- Token limits: 1500 for completion tokens
-- Temperature: 0.1 for consistent results
-
-## 🧪 Testing
-
-### Run All Tests
-```bash
-python main.py test
-```
-
-### Test Specific Components
-```bash
-# Test reasoning models
-python main.py test-reasoning
-
-# Test MCP server
-python main.py test-mcp-query
-
-# Test MCP chat
-python main.py test-mcp-chat
-```
-
-### Manual Testing
-```bash
-# Test UI functionality
-python quick_ui_test.py
-```
-
-## 📚 Documentation
-
-- [MCP Implementation Guide](docs/MCP_IMPLEMENTATION_SUMMARY.md)
-- [UI Improvements Summary](docs/UI_IMPROVEMENTS_SUMMARY.md)
-- [Reasoning Model Guide](docs/REASONING_MODEL_IMPROVEMENTS.md)
-- [Troubleshooting](docs/CHAT_ASSISTANT_TROUBLESHOOTING.md)
-
-## 🔍 API Integration
-
-### ClinicalTrials.gov API
-- Direct integration with `https://clinicaltrials.gov/api/v2/studies`
-- Real-time trial data fetching
-- Automatic data processing and storage
-
-### OpenAI API
-- Reasoning model integration
-- Natural language processing
-- Advanced query understanding
-
-## 🚀 Deployment
-
-### Local Development
-```bash
-python main.py ui
-```
-
-### Production Considerations
-- Use environment variables for API keys
-- Set up proper database backups
-- Configure logging levels
-- Use HTTPS in production
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🆘 Support
-
-For issues and questions:
-1. Check the [troubleshooting guide](docs/CHAT_ASSISTANT_TROUBLESHOOTING.md)
-2. Review the [documentation](docs/)
-3. Open an issue on GitHub
-
-## 🎯 Roadmap
-
-- [ ] Add more reasoning models
-- [ ] Implement trial comparison features
-- [ ] Add statistical analysis tools
-- [ ] Enhance UI with advanced visualizations
-- [ ] Add support for more data sources
-- [ ] Implement real-time trial monitoring
-
----
-
-**Built with ❤️ using OpenAI's reasoning models and Model Context Protocol**
-
-Updated on 22nd July
+- `

@@ -16,15 +16,18 @@ logger = logging.getLogger(__name__)
 
 class ClinicalTrialAnalyzerReasoning:
     """
-    Clinical Trial Analysis System using Reasoning Models
+    Clinical Trial Analysis System using OpenAI's o3 Reasoning Models
     Based on detailed specifications in GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md
+    
+    This analyzer extracts structured data from clinical trial records to generate
+    Analysis-Ready Datasets (ARD) for downstream analysis and dashboard visualization.
     """
     
     def __init__(self, openai_api_key: str, model: str = "o3-mini"):
-        """Initialize the analyzer with OpenAI API key and reasoning model"""
+        """Initialize the analyzer with OpenAI API key and o3 reasoning model"""
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         
-        # Validate model choice - focus on reasoning models
+        # Validate model choice - prioritize o3 reasoning models
         available_models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "gpt-4"]
         if model not in available_models:
             print(f"Warning: Model '{model}' not in available models. Using 'o3-mini' instead.")
@@ -32,17 +35,19 @@ class ClinicalTrialAnalyzerReasoning:
         else:
             self.model = model
             
-        print(f"Using reasoning model: {self.model}")
-        print("Enhanced prompts based on detailed specifications...")
+        print(f"🏥 Clinical Trial Analyzer using {self.model}")
+        print("📋 Enhanced analysis based on detailed clinical trial specifications...")
         
         # Check if model is a reasoning model
         reasoning_models = ["o3", "o3-mini"]
         if self.model in reasoning_models:
-            print(f"✓ {self.model} is a reasoning model - excellent for complex analysis")
+            print(f"✅ {self.model} is a reasoning model - excellent for complex clinical trial analysis")
+            print("🧠 Optimized for structured data extraction and field standardization")
         else:
-            print(f"⚠ {self.model} is not a reasoning model - consider using o3 or o3-mini for better results")
+            print(f"⚠️ {self.model} is not a reasoning model - consider using o3 or o3-mini for better results")
             
         self.base_url = "https://clinicaltrials.gov/api/v2/studies"
+        
         # Import paths using dynamic path resolution
         import sys
         utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils')
@@ -52,6 +57,157 @@ class ClinicalTrialAnalyzerReasoning:
         self.cache_dir = CACHE_DIR
         self.cache_dir.mkdir(exist_ok=True)
         
+        # Load the comprehensive analysis prompt
+        self._load_analysis_prompt()
+    
+    def _load_analysis_prompt(self):
+        """Load the comprehensive clinical trial analysis prompt"""
+        self.analysis_prompt = """
+You are an expert Clinical Trial Analysis Assistant powered by OpenAI's o3 reasoning models. Your objective is to analyze clinical trial records from ClinicalTrials.gov and extract structured data fields to generate a standardized, valuable, and human-intelligent Analysis-Ready Dataset (ARD).
+
+## ANALYSIS OBJECTIVE
+For each provided NCT ID, analyze the full clinical trial record and extract structured data fields according to the detailed specifications below.
+
+## CRITICAL ANALYSIS RULES
+
+### 1. PRIMARY DRUG IDENTIFICATION
+- **Source Sections**: Brief Title, Brief Summary, Description, Official Title, Intervention
+- **Objective**: Identify the primary investigational drug being tested
+- **Rules**:
+  - Focus on the trial's main objective and evaluation focus
+  - Exclude active comparators (e.g., "vs chemo" or "Active Comparator: Chemo")
+  - Do not consider background therapies or standard-of-care agents as primary unless part of novel investigational combination
+  - For novel combinations of two investigational agents, consider both drugs as primary in separate rows
+  - Standardize to generic drug name (e.g., "pembrolizumab" not "Keytruda")
+  - Use code name if generic name unavailable
+
+### 2. MECHANISM OF ACTION (MoA) STANDARDIZATION
+- **Format Rules**:
+  - Antibodies: "Anti-[Target]" (e.g., "Anti-Nectin-4", "Anti-PD-1")
+  - Small molecules: "[Target] inhibitor" (e.g., "PARP inhibitor", "EGFR inhibitor")
+  - Bispecifics: "Anti-[Target] × [Target]" (e.g., "Anti-PD-1 × CTLA-4")
+  - Trispecifics: "Anti-[Target] × [Target] × [Target]"
+  - Agonists: "[Target] agonist" (e.g., "TLR9 agonist")
+  - Antagonists: "[Target] antagonist" (e.g., "CCR4 antagonist")
+
+### 3. DRUG MODALITY CLASSIFICATION
+- **ADC**: Antibody-drug conjugate
+- **Monoclonal antibody**: Drugs ending in -mab
+- **Small molecule**: Drugs ending in -tinib, kinase inhibitors
+- **CAR-T**: Chimeric antigen receptor T cell
+- **T-cell engager**: T-cell redirecting bispecific
+- **Cell therapy**: Cell-based therapies (NK, T-cell)
+- **Gene therapy**: Gene-altering/encoding drugs
+- **Radiopharmaceutical**: Radiolabeled ligands
+- **Fusion protein**: Protein fusion constructs
+
+### 4. INDICATION ANALYSIS
+- **Primary Indication**: Main disease of interest/scope
+- **Other Indications**: All other disease indications studied
+- **Grouping**: Group and deduplicate disease names logically
+- **Output Format**: [Primary Indication] + [Other Indications]
+
+### 5. ROUTE OF ADMINISTRATION (ROA)
+- **Standardized Formats**:
+  - Intravenous (IV)
+  - Subcutaneous (SC)
+  - Oral
+  - Intratumoral (IT)
+- **Rules**: Do not infer ROA unless clearly stated or supported by secondary reference
+
+### 6. MONO/COMBO CLASSIFICATION
+- **Mono**: Drug evaluated alone (not in combination)
+- **Combo**: Drug evaluated in combination with one or more drugs
+- **Special Cases**: Profile mono and combo separately in different rows if both evaluated
+
+### 7. LINE OF THERAPY (LOT)
+- **1L**: Treatment-naive, previously untreated, newly diagnosed
+- **2L**: Patients treated with no more than 1 prior therapy
+- **2L+**: Patients treated with ≥1 prior therapy, refractory/intolerant to SOC
+- **Adjuvant**: Treatment after primary therapy (surgery)
+- **Neoadjuvant**: Treatment before primary therapy
+- **Maintenance**: Ongoing treatment after initial successful therapy
+
+### 8. BIOMARKER EXTRACTION
+- **Common Biomarkers**: HER2, PD-L1, EGFR, HLA-A*02:01, PIK3CA, TROP2, MAGE-A4, MSI-H/dMMR, ALK, ROS1, BRAF, RET, MET, KRAS, Nectin-4, TP53, 5T4, MTAP, CD39, CD103, CD8+, B7-H3
+- **Standardization**: Use exact gene names (HER2 not ErbB2, PD-L1 not PDL1)
+- **Wildtype**: Format as "[Gene] wild-type" or "[Gene] negative"
+
+### 9. SPONSOR TYPE CLASSIFICATION
+- **Industry Only**: Pharmaceutical company sponsor
+- **Academic Only**: Academic institution, university, non-profit sponsor
+- **Industry-Academic Collaboration**: Mix of industry and academic sponsors
+
+### 10. GEOGRAPHY CLASSIFICATION
+- **Global**: Includes US, EU, Japan, and China
+- **International**: Europe with/without Japan, China, and other countries
+- **China Only**: Only China or China and Taiwan
+
+## OUTPUT FORMAT
+Return a JSON object with the following structure:
+
+{
+  "primary_drug": "string",
+  "primary_drug_moa": "string", 
+  "primary_drug_target": "string",
+  "primary_drug_modality": "string",
+  "indication": "string",
+  "primary_drug_roa": "string",
+  "mono_combo": "string",
+  "combination_partner": "string",
+  "moa_of_combination": "string",
+  "experimental_regimen": "string",
+  "moa_of_experimental_regimen": "string",
+  "trial_name": "string",
+  "trial_id": "string",
+  "trial_phase": "string",
+  "line_of_therapy": "string",
+  "biomarker_mutations": "string",
+  "biomarker_stratification": "string",
+  "biomarker_wildtype": "string",
+  "histology": "string",
+  "prior_treatment": "string",
+  "stage_of_disease": "string",
+  "trial_status": "string",
+  "patient_enrollment": "string",
+  "sponsor_type": "string",
+  "sponsor": "string",
+  "collaborator": "string",
+  "developer": "string",
+  "start_date": "string",
+  "primary_completion_date": "string",
+  "study_completion_date": "string",
+  "primary_endpoints": "string",
+  "secondary_endpoints": "string",
+  "patient_population": "string",
+  "inclusion_criteria": "string",
+  "exclusion_criteria": "string",
+  "trial_countries": "string",
+  "geography": "string",
+  "investigator_name": "string",
+  "investigator_designation": "string",
+  "investigator_qualification": "string",
+  "investigator_location": "string",
+  "history_of_changes": "string"
+}
+
+## ANALYSIS PROCESS
+1. Extract all relevant information from the trial record
+2. Apply standardization rules consistently
+3. Handle missing data appropriately (use "Not Available" when needed)
+4. Create separate rows for different combinations/arms if applicable
+5. Ensure all extracted data follows the specified format and rules
+
+## REASONING PROCESS
+1. First, identify all experimental arms and active comparators
+2. Determine which drug is the primary investigational agent
+3. Analyze the drug's mechanism and properties
+4. Determine if it's evaluated as mono or combo therapy
+5. Extract combination partners if applicable
+6. Apply standardization rules consistently across all fields
+7. Validate extracted data against the comprehensive specifications
+"""
+    
     def fetch_trial_data(self, nct_id: str) -> Optional[Dict[str, Any]]:
         """Fetch clinical trial data from ClinicalTrials.gov API"""
         cache_file = self.cache_dir / f"{nct_id}.json"
@@ -534,7 +690,7 @@ class ClinicalTrialAnalyzerReasoning:
     
     def analyze_trial(self, nct_id: str, json_file_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Analyze a clinical trial using reasoning models
+        Analyze a clinical trial using o3 reasoning model with document attachment
         
         Args:
             nct_id: NCT ID of the trial
@@ -552,11 +708,162 @@ class ClinicalTrialAnalyzerReasoning:
         if not trial_data:
             return {"error": f"Could not load trial data for {nct_id}"}
         
+        # Use comprehensive analysis with document attachment for o3 models
+        if self.model in ["o3", "o3-mini"]:
+            return self._analyze_trial_with_document_attachment(nct_id, trial_data)
+        else:
+            # Fallback to existing method for non-o3 models
+            return self._analyze_trial_legacy(nct_id, trial_data)
+    
+    def _analyze_trial_with_document_attachment(self, nct_id: str, trial_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze clinical trial using o3 model with both clinical trial data and specification document as attachments
+        """
+        try:
+            # Create the analysis prompt
+            analysis_prompt = f"""
+Please analyze the clinical trial data provided in the attached files according to the detailed specifications.
+
+I have provided you with:
+1. The complete clinical trial data for NCT ID: {nct_id}
+2. The detailed clinical trial analysis specification document
+
+Please extract all the required fields according to the detailed specifications in the attached document. Return your analysis as a JSON object with the exact field names and structure specified in the document.
+
+Focus on:
+1. Primary drug identification and standardization
+2. Mechanism of action classification
+3. Drug modality determination
+4. Indication analysis and grouping
+5. Route of administration
+6. Mono/Combo classification
+7. Line of therapy determination
+8. Biomarker extraction and standardization
+9. Sponsor type classification
+10. Geography classification
+11. All other specified fields
+
+Ensure all extracted data follows the standardization rules and format requirements specified in the attached document.
+"""
+            
+            # Prepare the specification document attachment
+            doc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
+            
+            if os.path.exists(doc_path):
+                # Read the specification document content
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    doc_content = f.read()
+                
+                # Upload both files
+                spec_file_id = self._upload_document(doc_content, f"clinical_trial_analysis_specs.md")
+                trial_file_id = self._upload_document(json.dumps(trial_data, indent=2), f"{nct_id}_trial_data.json")
+                
+                # Create the API call with both attachments
+                response = self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": analysis_prompt
+                                },
+                                {
+                                    "type": "file",
+                                    "file_id": spec_file_id
+                                },
+                                {
+                                    "type": "file",
+                                    "file_id": trial_file_id
+                                }
+                            ]
+                        }
+                    ],
+                    max_completion_tokens=4000,
+                    response_format={"type": "json_object"}
+                )
+                
+                # Clean up uploaded files
+                try:
+                    self.openai_client.files.delete(spec_file_id)
+                    self.openai_client.files.delete(trial_file_id)
+                except Exception as e:
+                    logger.warning(f"Could not delete uploaded files: {e}")
+                    
+            else:
+                # Fallback if document not found
+                logger.warning(f"Document not found at {doc_path}, using text-based prompt")
+                response = self.openai_client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.analysis_prompt},
+                        {"role": "user", "content": f"Analyze the following clinical trial data: {json.dumps(trial_data, indent=2)}"}
+                    ],
+                    max_completion_tokens=4000,
+                    response_format={"type": "json_object"}
+                )
+            
+            # Parse the response
+            content = response.choices[0].message.content.strip()
+            result = json.loads(content)
+            
+            # Add metadata
+            result.update({
+                "nct_id": nct_id,
+                "analysis_timestamp": datetime.now().isoformat(),
+                "model_used": self.model,
+                "analysis_method": "dual_document_attachment"
+            })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in dual document attachment analysis: {e}")
+            return {
+                "error": f"Analysis failed: {str(e)}",
+                "nct_id": nct_id,
+                "analysis_timestamp": datetime.now().isoformat(),
+                "model_used": self.model
+            }
+    
+    def _upload_document(self, content: str, filename: str) -> str:
+        """
+        Upload document content to OpenAI for attachment
+        """
+        try:
+            # Create a temporary file
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+                f.write(content)
+                temp_path = f.name
+            
+            # Upload the file
+            with open(temp_path, 'rb') as f:
+                file_response = self.openai_client.files.create(
+                    file=f,
+                    purpose="assistants"
+                )
+            
+            # Clean up temp file
+            os.unlink(temp_path)
+            
+            return file_response.id
+            
+        except Exception as e:
+            logger.error(f"Error uploading document: {e}")
+            raise
+    
+    def _analyze_trial_legacy(self, nct_id: str, trial_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Legacy analysis method for non-o3 models
+        """
         # Extract all fields using reasoning models
         result = {
             "nct_id": nct_id,
             "analysis_timestamp": datetime.now().isoformat(),
-            "model_used": self.model
+            "model_used": self.model,
+            "analysis_method": "legacy"
         }
         
         # Extract basic fields (pass nct_id for fallback)

@@ -23,7 +23,7 @@ class ClinicalTrialChatMCP:
     """Chat interface for clinical trial queries using OpenAI LLM and MCP tools"""
     
     def __init__(self, openai_api_key: str, model: str = "o3-mini"):
-        """Initialize the chat interface with reasoning model by default"""
+        """Initialize the chat interface with o3 reasoning model by default"""
         self.openai_api_key = openai_api_key
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         self.model = model
@@ -31,9 +31,27 @@ class ClinicalTrialChatMCP:
         self.mcp_process = None
         self.mcp_tools = []
         
+        # Load the clinical trial analysis document for attachment
+        self._load_analysis_document()
+        
         # Initialize MCP server
         self._start_mcp_server()
         self._load_mcp_tools()
+    
+    def _load_analysis_document(self):
+        """Load the clinical trial analysis specification document"""
+        try:
+            doc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
+            if os.path.exists(doc_path):
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    self.analysis_document = f.read()
+                logger.info("✅ Clinical trial analysis document loaded successfully")
+            else:
+                self.analysis_document = None
+                logger.warning("⚠️ Clinical trial analysis document not found")
+        except Exception as e:
+            self.analysis_document = None
+            logger.error(f"❌ Error loading analysis document: {e}")
     
     def _start_mcp_server(self):
         """Start the MCP server process"""
@@ -504,7 +522,7 @@ class ClinicalTrialChatMCP:
                 limit = arguments.get("limit", 20)
                 format_type = arguments.get("format", "detailed")
                 
-                # Use the reasoning analyzer directly
+                # Use the reasoning analyzer with document attachment for o3 models
                 try:
                     import sys
                     analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
@@ -513,15 +531,18 @@ class ClinicalTrialChatMCP:
                     from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=reasoning_model)
                     
-                    # Analyze the query
-                    analysis_result = analyzer.analyze_query(query)
+                    # Enhanced query analysis with document attachment for o3 models
+                    if reasoning_model in ["o3", "o3-mini"]:
+                        analysis_result = self._analyze_query_with_document_attachment(query, reasoning_model)
+                    else:
+                        analysis_result = analyzer.analyze_query(query)
                     
                     # Search for trials based on extracted filters
                     filters = analysis_result.get('filters', {})
                     results = db.search_trials(filters, limit)
                     
                     # Format the response
-                    response = f"🧠 **Reasoning Query Analysis** (using {reasoning_model})\n\n"
+                    response = f"🧠 **Advanced Reasoning Query Analysis** (using {reasoning_model})\n\n"
                     response += f"**Query:** {query}\n\n"
                     response += f"**Intent:** {analysis_result.get('query_intent', 'N/A')}\n\n"
                     response += f"**Confidence:** {analysis_result.get('confidence_score', 'N/A')}\n\n"
@@ -536,7 +557,7 @@ class ClinicalTrialChatMCP:
                         response += "**No trials found matching the criteria.**\n\n"
                     
                     if include_analysis:
-                        response += "**AI Analysis:** The reasoning model successfully interpreted your complex query and extracted relevant filters for clinical trial comparison.\n\n"
+                        response += "**AI Analysis:** The reasoning model with document attachment successfully interpreted your complex query and extracted relevant filters for clinical trial analysis.\n\n"
                     
                     return response
                     
@@ -809,6 +830,131 @@ Always explain what you're doing and provide context for the results."""
     def clear_history(self):
         """Clear conversation history"""
         self.conversation_history = []
+    
+    def _analyze_query_with_document_attachment(self, query: str, model: str) -> Dict[str, Any]:
+        """
+        Analyze query using o3 model with document attachment for enhanced understanding
+        """
+        try:
+            # Prepare the query analysis prompt
+            analysis_prompt = f"""
+Please analyze the following natural language query about clinical trials according to the detailed specifications provided in the attached document.
+
+QUERY: "{query}"
+
+Please extract structured information and return your analysis as a JSON object with the following structure:
+{{
+    "filters": {{
+        "primary_drug": "extracted drug name or null",
+        "indication": "extracted indication or null", 
+        "trial_phase": "extracted phase or null",
+        "trial_status": "extracted status or null",
+        "sponsor": "extracted sponsor or null",
+        "line_of_therapy": "extracted line of therapy or null",
+        "biomarker": "extracted biomarker or null"
+    }},
+    "query_intent": "description of what the user wants",
+    "search_strategy": "how to approach this search",
+    "relevant_fields": ["list", "of", "relevant", "fields"],
+    "confidence_score": 0.0-1.0
+}}
+
+Use the detailed specifications in the attached document to ensure accurate extraction of clinical trial terminology and concepts.
+"""
+            
+            # Prepare the specification document attachment
+            doc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
+            
+            if os.path.exists(doc_path):
+                # Read the specification document content
+                with open(doc_path, 'r', encoding='utf-8') as f:
+                    doc_content = f.read()
+                
+                # Upload the document
+                file_id = self._upload_document(doc_content, "clinical_trial_analysis_specs.md")
+                
+                # Create the API call with document attachment
+                response = self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": analysis_prompt
+                                },
+                                {
+                                    "type": "file",
+                                    "file_id": file_id
+                                }
+                            ]
+                        }
+                    ],
+                    max_completion_tokens=1500,
+                    response_format={"type": "json_object"}
+                )
+                
+                # Clean up uploaded file
+                try:
+                    self.openai_client.files.delete(file_id)
+                except Exception as e:
+                    logger.warning(f"Could not delete uploaded file: {e}")
+                    
+            else:
+                # Fallback if document not found
+                logger.warning(f"Document not found at {doc_path}, using text-based prompt")
+                response = self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You are an expert clinical trial analyst. Extract structured information from natural language queries about clinical trials."},
+                        {"role": "user", "content": analysis_prompt}
+                    ],
+                    max_completion_tokens=1500,
+                    response_format={"type": "json_object"}
+                )
+            
+            # Parse the response
+            content = response.choices[0].message.content.strip()
+            return json.loads(content)
+            
+        except Exception as e:
+            logger.error(f"Error in document attachment query analysis: {e}")
+            # Fallback to basic analysis
+            return {
+                "filters": {},
+                "query_intent": f"Basic analysis of: {query}",
+                "search_strategy": "Basic search",
+                "relevant_fields": [],
+                "confidence_score": 0.5
+            }
+    
+    def _upload_document(self, content: str, filename: str) -> str:
+        """
+        Upload document content to OpenAI for attachment
+        """
+        try:
+            # Create a temporary file
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as f:
+                f.write(content)
+                temp_path = f.name
+            
+            # Upload the file
+            with open(temp_path, 'rb') as f:
+                file_response = self.openai_client.files.create(
+                    file=f,
+                    purpose="assistants"
+                )
+            
+            # Clean up temp file
+            os.unlink(temp_path)
+            
+            return file_response.id
+            
+        except Exception as e:
+            logger.error(f"Error uploading document: {e}")
+            raise
     
     def close(self):
         """Close the chat interface and stop MCP server"""

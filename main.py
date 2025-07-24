@@ -24,6 +24,7 @@ def main():
     print("6. python main.py test-reasoning - Test reasoning models")
     print("7. python main.py test-mcp-query - Test MCP server with reasoning query")
     print("8. python main.py test-mcp-chat - Test MCP chat with reasoning models")
+    print("9. python main.py test-o3-doc - Test o3 model with document attachment")
     print("=" * 50)
     
     if len(sys.argv) < 2:
@@ -57,9 +58,12 @@ def main():
     elif command == "test-mcp-chat":
         from test_mcp_chat_reasoning import main as test_mcp_chat
         test_mcp_chat()
+    elif command == "test-o3-doc":
+        from test_o3_document_attachment import main as test_o3_doc
+        test_o3_doc()
     else:
         print(f"Unknown command: {command}")
-        print("Available commands: setup, ui, process, populate, test, test-reasoning, test-mcp-query, test-mcp-chat")
+        print("Available commands: setup, ui, process, populate, test, test-reasoning, test-mcp-query, test-mcp-chat, test-o3-doc")
 
 if __name__ == "__main__":
     main() 

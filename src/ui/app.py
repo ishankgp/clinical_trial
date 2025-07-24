@@ -385,17 +385,30 @@ def main():
         with col2:
             st.subheader("🤖 Analysis Options")
             
-            # Model selection
-            models = ["gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
+            # Model selection with descriptions
+            st.write("**Available Models:**")
+            st.write("• **o3**: Most powerful reasoning model (best accuracy)")
+            st.write("• **o3-mini**: Fast reasoning model (recommended)")
+            st.write("• **gpt-4o**: Standard model with good performance")
+            st.write("• **gpt-4o-mini**: Fast standard model")
+            st.write("• **o4-mini**: Latest reasoning model")
+            st.write("• **gpt-4**: Legacy model")
+            st.write("• **llm**: Specialized clinical analysis")
+            
+            models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
             selected_models = st.multiselect(
                 "Select models to compare:",
                 models,
-                default=["gpt-4o-mini"]
+                default=["o3-mini"]
             )
             
             # Analysis options
             st.write("**Analysis Options:**")
             force_reanalyze = st.checkbox("Force re-analysis (ignore cache)")
+            
+            # Note about o3 models
+            if any(model in selected_models for model in ["o3", "o3-mini"]):
+                st.info("🧠 **o3 Models**: Using document attachment for enhanced analysis with detailed clinical trial specifications!")
             
             # Quick select from processed trials
             if processed_trials:
@@ -451,11 +464,11 @@ def main():
         
         with col2:
             st.subheader("🤖 Models to Compare")
-            all_models = ["gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
+            all_models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
             compare_models = st.multiselect(
                 "Select models:",
                 all_models,
-                default=["gpt-4o", "gpt-4o-mini", "llm"]
+                default=["o3-mini", "gpt-4o", "llm"]
             )
         
         # Run comparison
