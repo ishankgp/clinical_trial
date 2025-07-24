@@ -21,7 +21,7 @@ def test_reasoning_models():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("❌ OPENAI_API_KEY not found in environment")
-        return False
+        assert False, "OPENAI_API_KEY not found in environment"
 
     print("🧪 Testing Reasoning Models")
     print("=" * 50)
@@ -36,10 +36,11 @@ def test_reasoning_models():
         test_query = "Find Phase 3 trials for bladder cancer with checkpoint inhibitors"
         result = analyzer_mini.analyze_query(test_query)
         print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
+        assert 'filters' in result
 
     except Exception as e:
         print(f"❌ o3-mini test failed: {e}")
-        return False
+        assert False, f"o3-mini test failed: {e}"
 
     # Test o3 model
     print("\n2. Testing o3 model...")
@@ -51,10 +52,11 @@ def test_reasoning_models():
         test_query = "Compare trials using different ADC modalities for solid tumors"
         result = analyzer_o3.analyze_query(test_query)
         print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
+        assert 'filters' in result
 
     except Exception as e:
         print(f"❌ o3 test failed: {e}")
-        return False
+        assert False, f"o3 test failed: {e}"
 
     # Test fallback to non-reasoning model
     print("\n3. Testing fallback to gpt-4o...")
@@ -66,10 +68,11 @@ def test_reasoning_models():
         test_query = "Find diabetes trials with semaglutide"
         result = analyzer_fallback.analyze_query(test_query)
         print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
+        assert 'filters' in result
 
     except Exception as e:
         print(f"❌ gpt-4o fallback test failed: {e}")
-        return False
+        assert False, f"gpt-4o fallback test failed: {e}"
 
     print("\n" + "=" * 50)
     print("🎉 All reasoning model tests passed!")
@@ -78,9 +81,6 @@ def test_reasoning_models():
     print("- o3-mini: Fast reasoning model (default)")
     print("- gpt-4o: Fallback non-reasoning model")
 
-    return True
-
 
 if __name__ == "__main__":
-    success = test_reasoning_models()
-    sys.exit(0 if success else 1)
+    test_reasoning_models()
