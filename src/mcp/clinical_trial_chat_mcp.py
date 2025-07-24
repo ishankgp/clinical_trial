@@ -24,6 +24,7 @@ class ClinicalTrialChatMCP:
     
     def __init__(self, openai_api_key: str, model: str = "o3-mini"):
         """Initialize the chat interface with reasoning model by default"""
+        self.openai_api_key = openai_api_key
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         self.model = model
         self.conversation_history = []
@@ -510,7 +511,7 @@ class ClinicalTrialChatMCP:
                     if analysis_path not in sys.path:
                         sys.path.append(analysis_path)
                     from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-                    analyzer = ClinicalTrialAnalyzerReasoning(openai_api_key, model=reasoning_model)
+                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=reasoning_model)
                     
                     # Analyze the query
                     analysis_result = analyzer.analyze_query(query)
@@ -555,7 +556,7 @@ class ClinicalTrialChatMCP:
                         sys.path.append(analysis_path)
                     from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     model = "o3" if analysis_depth == "expert" else "o3-mini"
-                    analyzer = ClinicalTrialAnalyzerReasoning(openai_api_key, model=model)
+                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
                     
                     # Analyze the comparison criteria
                     analysis_result = analyzer.analyze_query(comparison_criteria)
@@ -603,7 +604,7 @@ class ClinicalTrialChatMCP:
                         sys.path.append(analysis_path)
                     from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     model = "o3" if group_by == "expert" else "o3-mini"
-                    analyzer = ClinicalTrialAnalyzerReasoning(openai_api_key, model=model)
+                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
                     
                     # Analyze the trend query
                     analysis_result = analyzer.analyze_query(trend_query)
