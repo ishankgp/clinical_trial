@@ -558,11 +558,40 @@ def main():
                 - 💊 **Drug mechanism analysis** and comparisons
                 - 📤 **Data export** with intelligent filtering
                 - 🧠 **Complex clinical trial queries** requiring reasoning
+                - 📋 **Document attachment** for enhanced analysis accuracy
                 
                 **Example:** "Compare Phase 3 trials for metastatic bladder cancer using different checkpoint inhibitors"
                 """)
+                
+                st.info("🧠 **Enhanced with Document Attachment**: The o3-mini model uses the detailed clinical trial analysis specification document for superior accuracy and standardization!")
             
             with col2:
+                st.subheader("⚙️ Chat Settings")
+                
+                # Model selection for MCP chat
+                mcp_models = ["o3-mini", "o3"]
+                selected_mcp_model = st.selectbox(
+                    "Reasoning Model:",
+                    mcp_models,
+                    index=0,
+                    help="o3-mini: Fast reasoning (default), o3: Most powerful reasoning"
+                )
+                
+                # Update model if changed
+                if 'current_mcp_model' not in st.session_state:
+                    st.session_state.current_mcp_model = "o3-mini"
+                
+                if selected_mcp_model != st.session_state.current_mcp_model:
+                    try:
+                        api_key = os.getenv("OPENAI_API_KEY")
+                        if api_key:
+                            st.session_state.mcp_chat_interface = ClinicalTrialChatMCP(api_key, model=selected_mcp_model)
+                            st.session_state.current_mcp_model = selected_mcp_model
+                            st.session_state.mcp_chat_messages = []
+                            st.success(f"✅ Switched to {selected_mcp_model} model!")
+                    except Exception as e:
+                        st.error(f"❌ Failed to switch model: {e}")
+                
                 if st.button("🗑️ Clear MCP Chat", type="secondary"):
                     st.session_state.mcp_chat_messages = []
                     st.session_state.mcp_chat_interface.clear_history()
@@ -591,7 +620,8 @@ def main():
                 
                 # Get assistant response
                 with st.chat_message("assistant"):
-                    with st.spinner("🧠 Processing with o3-mini reasoning model..."):
+                    current_model = st.session_state.current_mcp_model if 'current_mcp_model' in st.session_state else "o3-mini"
+                    with st.spinner(f"🧠 Processing with {current_model} reasoning model..."):
                         try:
                             response = st.session_state.mcp_chat_interface.chat(prompt)
                             st.markdown(response)
