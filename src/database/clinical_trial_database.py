@@ -471,7 +471,13 @@ class ClinicalTrialDatabase:
         """
         try:
             cursor = self.connection.cursor()
-            query = "SELECT * FROM clinical_trials"
+            query = (
+                "SELECT ct.*, di.*, ci.*, bi.* "
+                "FROM clinical_trials ct "
+                "LEFT JOIN drug_info di ON ct.nct_id = di.nct_id "
+                "LEFT JOIN clinical_info ci ON ct.nct_id = ci.nct_id "
+                "LEFT JOIN biomarker_info bi ON ct.nct_id = bi.nct_id"
+            )
             params = []
             where_clauses = []
             # Helper for multi-term, multi-field search
@@ -533,7 +539,7 @@ class ClinicalTrialDatabase:
                     # Add more fields as needed
             if where_clauses:
                 query += " WHERE " + " AND ".join(where_clauses)
-            query += f" ORDER BY created_at DESC LIMIT {limit}"
+            query += f" ORDER BY ct.created_at DESC LIMIT {limit}"
             cursor.execute(query, params)
             rows = cursor.fetchall()
             columns = [description[0] for description in cursor.description]
