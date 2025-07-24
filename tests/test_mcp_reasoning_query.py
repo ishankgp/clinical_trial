@@ -9,6 +9,7 @@ import sys
 import asyncio
 import json
 from pathlib import Path
+import pytest
 
 # Add the repository root src directory to the import path
 src_dir = Path(__file__).resolve().parents[1] / "src"
@@ -17,6 +18,7 @@ sys.path.insert(0, str(src_dir))
 from mcp.clinical_trial_mcp_server import ClinicalTrialMCPServer
 
 
+@pytest.mark.asyncio
 async def test_reasoning_query():
     """Test the MCP server with a complex reasoning query"""
 
@@ -134,6 +136,7 @@ async def test_reasoning_query():
         return False
 
 
+@pytest.mark.asyncio
 async def test_simple_queries():
     """Test some simpler queries to verify basic functionality"""
 

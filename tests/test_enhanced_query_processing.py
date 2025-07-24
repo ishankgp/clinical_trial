@@ -10,6 +10,7 @@ import asyncio
 import json
 from pathlib import Path
 from dotenv import load_dotenv
+import pytest
 
 # Load environment variables
 load_dotenv()
@@ -20,6 +21,7 @@ sys.path.insert(0, str(src_dir))
 
 from mcp.clinical_trial_mcp_server import ClinicalTrialMCPServer
 from analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+
 
 
 import pytest
