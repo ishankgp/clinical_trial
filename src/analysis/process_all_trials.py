@@ -38,7 +38,7 @@ class TrialProcessor:
         self.analyzers = {
             "gpt-4o": ClinicalTrialAnalyzerReasoning(self.api_key, model="gpt-4o"),
             "gpt-4o-mini": ClinicalTrialAnalyzerReasoning(self.api_key, model="gpt-4o-mini"),
-            "o4-mini": ClinicalTrialAnalyzerReasoning(self.api_key, model="o4-mini"),
+            "o3": ClinicalTrialAnalyzerReasoning(self.api_key, model="o3"),
             "gpt-4": ClinicalTrialAnalyzerReasoning(self.api_key, model="gpt-4"),
             "llm": ClinicalTrialAnalyzerLLM(self.api_key)
         }

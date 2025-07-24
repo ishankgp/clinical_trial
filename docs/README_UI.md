@@ -6,7 +6,7 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 
 ### 📊 Single Trial Analysis
 - Upload JSON files or enter NCT IDs
-- Choose from multiple OpenAI models (GPT-4o, GPT-4o-mini, o4-mini, GPT-4)
+- Choose from multiple OpenAI models (GPT-4o, GPT-4o-mini, o3, GPT-4)
 - Real-time analysis with progress tracking
 - Comprehensive results display with categorized tabs
 - Download results as CSV
@@ -97,7 +97,7 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 |-------|-------------|-----------|-------|------|
 | GPT-4o | ✅ | ✅ | Fast | Medium |
 | GPT-4o-mini | ✅ | ✅ | Very Fast | Low |
-| o4-mini | ✅ | ✅ | Very Fast | Low |
+| o3 | ✅ | ✅ | Very Fast | Low |
 | GPT-4 | ❌ | ✅ | Slow | High |
 
 ## 🎨 UI Features

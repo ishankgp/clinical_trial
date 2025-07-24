@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class ClinicalTrialChatMCP:
     """Chat interface for clinical trial queries using OpenAI LLM and MCP tools"""
     
-    def __init__(self, openai_api_key: str, model: str = "o3-mini"):
+    def __init__(self, openai_api_key: str, model: str = "o3"):
         """Initialize the chat interface with o3 reasoning model by default"""
         self.openai_api_key = openai_api_key
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
@@ -78,14 +78,29 @@ class ClinicalTrialChatMCP:
                 "type": "function",
                 "function": {
                     "name": "store_trial",
-                    "description": "Store a clinical trial from JSON file or NCT ID",
+                    "description": "Store and analyze a clinical trial from NCT ID or JSON file",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "nct_id": {"type": "string", "description": "NCT ID of the trial"},
-                            "json_file_path": {"type": "string", "description": "Path to JSON file (optional)"},
-                            "analyze_with_model": {"type": "string", "enum": ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "gpt-4", "llm"], "default": "o3-mini"},
-                            "force_reanalyze": {"type": "boolean", "default": False}
+                            "nct_id": {
+                                "type": "string",
+                                "description": "NCT ID of the clinical trial"
+                            },
+                            "json_file_path": {
+                                "type": "string",
+                                "description": "Optional path to JSON file containing trial data"
+                            },
+                            "analyze_with_model": {
+                                "type": "string", 
+                                "enum": ["o3", "gpt-4o", "gpt-4o-mini", "gpt-4", "llm"], 
+                                "default": "o3",
+                                "description": "Model to use for analysis"
+                            },
+                            "force_reanalyze": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Force reanalysis even if trial exists"
+                            }
                         },
                         "required": ["nct_id"]
                     }
@@ -237,7 +252,7 @@ class ClinicalTrialChatMCP:
                         "type": "object",
                         "properties": {
                             "query": {"type": "string", "description": "Complex natural language query requiring reasoning"},
-                            "reasoning_model": {"type": "string", "enum": ["o3", "o3-mini"], "default": "o3-mini", "description": "Reasoning model to use for query interpretation"},
+                            "reasoning_model": {"type": "string", "enum": ["o3"], "default": "o3", "description": "Reasoning model to use for query interpretation"},
                             "include_analysis": {"type": "boolean", "default": True, "description": "Include AI analysis and insights"},
                             "limit": {"type": "integer", "default": 20},
                             "format": {"type": "string", "enum": ["detailed", "summary", "analysis"], "default": "detailed"}
@@ -517,7 +532,7 @@ class ClinicalTrialChatMCP:
             
             elif function_name == "reasoning_query":
                 query = arguments.get("query", "")
-                reasoning_model = arguments.get("reasoning_model", "o3-mini")
+                reasoning_model = arguments.get("reasoning_model", "o3")
                 include_analysis = arguments.get("include_analysis", True)
                 limit = arguments.get("limit", 20)
                 format_type = arguments.get("format", "detailed")

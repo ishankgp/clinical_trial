@@ -564,7 +564,7 @@ def main():
         with col2:
             st.subheader("🤖 Analysis Options")
             
-            # Model selection with descriptions
+            # Model selection
             st.write("**Available Models:**")
             st.write("• **o3**: Most powerful reasoning model (best accuracy)")
             st.write("• **o3-mini**: Fast reasoning model (recommended)")
@@ -574,20 +574,31 @@ def main():
             st.write("• **gpt-4**: Legacy model")
             st.write("• **llm**: Specialized clinical analysis")
             
-            models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
+            # Model selection
+            reasoning_models = ["o3", "gpt-4o", "gpt-4o-mini", "gpt-4"]
+            
+            # Model selection
             selected_models = st.multiselect(
-                "Select models to compare:",
-                models,
-                default=["o3-mini"]
+                "Select models to use:",
+                reasoning_models + ["llm"],
+                default=["gpt-4o-mini"],
+                help="Choose one or more models for analysis. GPT-4o-mini is recommended for speed."
             )
             
-            # Analysis options
-            st.write("**Analysis Options:**")
-            force_reanalyze = st.checkbox("Force re-analysis (ignore cache)")
-            
-            # Note about o3 models
-            if any(model in selected_models for model in ["o3", "o3-mini"]):
-                st.info("🧠 **o3 Models**: Using document attachment for enhanced analysis with detailed clinical trial specifications!")
+            # Display model selection warning if needed
+            if any(model in selected_models for model in ["o3"]):
+                st.info("💡 o3 model provides the most accurate analysis but may be slower.")
+                
+            # Force reanalysis option
+            force_reanalyze = st.checkbox("Force re-analysis", value=False, 
+                help="Re-analyze even if the trial has already been processed with the selected models.")
+                
+            # Additional options
+            with st.expander("Advanced Options"):
+                st.write("These options will be implemented in future versions:")
+                st.checkbox("Cache results", value=True, disabled=True)
+                st.checkbox("Detailed logging", value=False, disabled=True)
+                st.checkbox("Export raw API responses", value=False, disabled=True)
             
             # Quick select from processed trials
             if processed_trials:
@@ -654,11 +665,19 @@ def main():
         
         with col2:
             st.subheader("🤖 Models to Compare")
-            all_models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
-            compare_models = st.multiselect(
-                "Select models:",
-                all_models,
-                default=["o3-mini", "gpt-4o", "llm"]
+            # Model selection with descriptions
+            st.write("**Available Models:**")
+            st.write("• **o3**: Most powerful reasoning model (best accuracy)")
+            st.write("• **gpt-4o**: Fast with good reasoning capabilities")
+            st.write("• **gpt-4o-mini**: Very fast, cost-effective")
+            st.write("• **gpt-4**: Legacy model with good reasoning")
+            st.write("• **llm**: Specialized clinical analysis")
+            
+            models = ["o3", "gpt-4o", "gpt-4o-mini", "gpt-4", "llm"]
+            selected_models = st.multiselect(
+                "Select models to compare:",
+                models,
+                default=["o3"]
             )
         
         # Run comparison
@@ -759,26 +778,38 @@ def main():
                 st.subheader("⚙️ Chat Settings")
                 
                 # Model selection for MCP chat
-                mcp_models = ["o3-mini", "o3"]
-                selected_mcp_model = st.selectbox(
-                    "Reasoning Model:",
-                    mcp_models,
-                    index=0,
-                    help="o3-mini: Fast reasoning (default), o3: Most powerful reasoning"
-                )
+                with st.expander("🤖 Model Selection"):
+                    st.write("Select the reasoning model to use for chat:")
+                    
+                    # Model options
+                    mcp_models = ["o3"]
+                    
+                    # Initialize current model if not set
+                    if 'current_mcp_model' not in st.session_state:
+                        st.session_state.current_mcp_model = "o3"
+                    
+                    # Default to current model if set
+                    current_model = st.session_state.current_mcp_model if 'current_mcp_model' in st.session_state else "o3"
+                    
+                    # Model selection
+                    new_model = st.selectbox(
+                        "Reasoning Model:",
+                        mcp_models,
+                        index=mcp_models.index(current_model) if current_model in mcp_models else 0
+                    )
                 
                 # Update model if changed
                 if 'current_mcp_model' not in st.session_state:
                     st.session_state.current_mcp_model = "o3-mini"
                 
-                if selected_mcp_model != st.session_state.current_mcp_model:
+                if new_model != st.session_state.current_mcp_model:
                     try:
                         api_key = os.getenv("OPENAI_API_KEY")
                         if api_key:
-                            st.session_state.mcp_chat_interface = ClinicalTrialChatMCP(api_key, model=selected_mcp_model)
-                            st.session_state.current_mcp_model = selected_mcp_model
+                            st.session_state.mcp_chat_interface = ClinicalTrialChatMCP(api_key, model=new_model)
+                            st.session_state.current_mcp_model = new_model
                             st.session_state.mcp_chat_messages = []
-                            st.success(f"✅ Switched to {selected_mcp_model} model!")
+                            st.success(f"✅ Switched to {new_model} model!")
                     except Exception as e:
                         st.error(f"❌ Failed to switch model: {e}")
                 
@@ -924,9 +955,9 @@ def main():
                     try:
                         api_key = os.getenv("OPENAI_API_KEY")
                         if api_key:
-                            st.session_state.mcp_chat_interface = ClinicalTrialChatMCP(api_key, model="o3-mini")
+                            st.session_state.mcp_chat_interface = ClinicalTrialChatMCP(api_key, model="o3")
                             st.session_state.mcp_chat_messages = []
-                            st.success("✅ MCP Chat assistant initialized successfully with o3-mini reasoning model!")
+                            st.success("✅ MCP Chat assistant initialized successfully with o3 reasoning model!")
                             st.rerun()
                         else:
                             st.error("❌ OpenAI API key not found!")

@@ -223,39 +223,38 @@ class ClinicalTrialMCPServer:
             self.cache_manager = None
 
     def _init_analyzers(self):
-        """Initialize AI analyzers"""
+        """Initialize analyzers with API key"""
         try:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                logger.warning("OPENAI_API_KEY not found in environment")
-                return
-
-            # Initialize analyzers lazily when needed
-            self.api_key = api_key
-            logger.info("Analyzers ready for initialization")
+                raise ValueError("OPENAI_API_KEY environment variable not set")
+            
+            # Initialize analyzers
+            self.analyzers = {
+                "gpt-4o": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4o"),
+                "gpt-4o-mini": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4o-mini"),
+                "o3": ClinicalTrialAnalyzerReasoning(api_key, model="o3"),
+                "gpt-4": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4"),
+                "llm": ClinicalTrialAnalyzerLLM(api_key)
+            }
+            
+            logger.info("Analyzers initialized successfully")
         except Exception as e:
-            logger.warning(f"Failed to initialize analyzers: {e}")
-
-    async def _get_analyzer(self, model_name: str) -> Any:
-        """Get or create analyzer for specified model"""
-        if model_name not in self.analyzers:
-            if not hasattr(self, "api_key") or not self.api_key:
-                raise AnalysisError("OpenAI API key not available")
-
-            try:
-                if model_name == "llm":
-                    self.analyzers[model_name] = ClinicalTrialAnalyzerLLM(self.api_key)
-                else:
-                    self.analyzers[model_name] = ClinicalTrialAnalyzerReasoning(
-                        self.api_key, model=model_name
-                    )
-                logger.info(f"Initialized analyzer for model: {model_name}")
-            except Exception as e:
-                raise AnalysisError(
-                    f"Failed to initialize analyzer for {model_name}: {e}"
-                )
-
-        return self.analyzers[model_name]
+            logger.error(f"Failed to initialize analyzers: {e}")
+            raise ValueError(f"Analyzer initialization failed: {e}")
+    
+    async def _get_analyzer(self, model_name: str):
+        """Get analyzer for specified model"""
+        if not self.analyzers:
+            await self._init_analyzers_async()
+        
+        # Validate model
+        valid_models = ["gpt-4o", "gpt-4o-mini", "o3", "gpt-4", "llm"]
+        if model_name not in valid_models:
+            logger.warning(f"Invalid model: {model_name}, using gpt-4o-mini")
+            model_name = "gpt-4o-mini"
+        
+        return self.analyzers.get(model_name)
 
     def _validate_nct_id(self, nct_id: str) -> bool:
         """Validate NCT ID format"""
@@ -274,7 +273,7 @@ class ClinicalTrialMCPServer:
 
         # Validate model if provided
         if "analyze_with_model" in arguments:
-            valid_models = ["gpt-4o", "gpt-4o-mini", "o4-mini", "gpt-4", "llm"]
+            valid_models = ["gpt-4o", "gpt-4o-mini", "o3", "gpt-4", "llm"]
             if arguments["analyze_with_model"] not in valid_models:
                 raise ValidationError(
                     f"Invalid model: {arguments['analyze_with_model']}"
@@ -307,7 +306,7 @@ class ClinicalTrialMCPServer:
                                     "enum": [
                                         "gpt-4o",
                                         "gpt-4o-mini",
-                                        "o4-mini",
+                                        "o3",
                                         "gpt-4",
                                         "llm",
                                     ],

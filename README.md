@@ -4,7 +4,7 @@ A comprehensive AI-powered system for analyzing clinical trials using OpenAI's r
 
 ## 🚀 Features
 
-- **AI-Driven Search**: Uses OpenAI's reasoning models (o3-mini) for intelligent natural language query understanding
+- **AI-Driven Search**: Uses OpenAI's reasoning models (o3) for intelligent natural language query understanding
 - **MCP Integration**: Model Context Protocol for standardized AI tool access
 - **Direct API Integration**: Fetches real trial data from ClinicalTrials.gov API
 - **Web Interface**: Streamlit-based UI for easy interaction
