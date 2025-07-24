@@ -32,8 +32,8 @@ Ensure these files exist:
 ```
 src/mcp/
 ├── clinical_trial_mcp_server.py  # ✅ Required
-├── clinical_trial_chat_mcp.py          # ✅ Required
-└── __init__.py                         # ✅ Required
+├── clinical_trial_chat_mcp.py    # ✅ Required
+└── __init__.py                   # ✅ Required
 ```
 
 #### **C. Check Python Path**
@@ -70,6 +70,7 @@ Look for error messages in the terminal where you started the MCP server.
 #### **C. Verify Dependencies**
 ```bash
 # Check if all required packages are installed
+pip install -r requirements_ui.txt
 pip list | grep -E "(mcp|openai|sqlite)"
 ```
 
@@ -88,7 +89,7 @@ pip list | grep -E "(mcp|openai|sqlite)"
 **Solutions:**
 
 #### **A. Fix Import Paths**
-The UI app now uses dynamic path resolution:
+The UI app uses dynamic path resolution:
 ```python
 # Automatically adds MCP path to sys.path
 mcp_path = os.path.join(os.path.dirname(__file__), '..', 'mcp')
@@ -163,7 +164,7 @@ clinical_trial/
    - Check status messages
 
 3. **Test Chat Functionality**
-   - Try a simple query
+   - Try a simple query like "Find diabetes trials"
    - Check for response
    - Verify error handling
 
@@ -200,6 +201,8 @@ logging.basicConfig(level=logging.DEBUG)
 ```bash
 # Check if MCP server is running
 ps aux | grep clinical_trial_mcp_server
+# On Windows
+tasklist | findstr python
 ```
 
 ### **2. Debug Chat Interface**
@@ -226,12 +229,16 @@ print('Chat module imported successfully')
 **Check Port Availability:**
 ```bash
 # Check if port 3000 is available (default MCP port)
+# On Linux/Mac
 netstat -an | grep 3000
+# On Windows
+netstat -an | findstr 3000
 ```
 
 **Firewall Issues:**
 - Ensure firewall allows local connections
 - Check antivirus software blocking connections
+- Try temporarily disabling firewall for testing
 
 ### **4. Database Issues**
 
@@ -251,9 +258,12 @@ print('Database connection successful')
 
 1. **Restart Everything**
    ```bash
-   # Stop all processes
+   # Stop all processes (Linux/Mac)
    pkill -f "python.*main.py"
    pkill -f "python.*mcp"
+   
+   # On Windows
+   taskkill /F /IM python.exe
    
    # Restart UI
    python main.py ui
@@ -261,7 +271,7 @@ print('Database connection successful')
 
 2. **Reinstall MCP**
    ```bash
-   pip uninstall mcp
+   pip uninstall mcp -y
    pip install mcp
    ```
 
@@ -269,6 +279,8 @@ print('Database connection successful')
    ```bash
    # Remove Python cache
    find . -name "__pycache__" -type d -exec rm -rf {} +
+   # On Windows
+   for /d /r . %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
    ```
 
 4. **Check Environment**
@@ -299,30 +311,6 @@ print('Database connection successful')
 - [ ] Error handling works
 - [ ] Performance acceptable
 - [ ] No memory leaks
-
-## 🆘 Getting Help
-
-### **If Issues Persist:**
-
-1. **Check Logs**
-   - UI console output
-   - MCP server logs
-   - Python error messages
-
-2. **Verify Environment**
-   - Python version compatibility
-   - Package versions
-   - System requirements
-
-3. **Test Minimal Setup**
-   - Start with basic MCP server
-   - Test simple queries
-   - Gradually add complexity
-
-4. **Document Issues**
-   - Error messages
-   - Steps to reproduce
-   - System information
 
 ## 🎉 Success Indicators
 

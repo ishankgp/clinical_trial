@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MCP implementation has been significantly enhanced to use advanced LLM reasoning models for processing natural language queries instead of basic string matching. This provides much more intelligent and accurate query understanding.
+The MCP implementation uses advanced LLM reasoning models for processing natural language queries instead of basic string matching. This provides much more intelligent and accurate query understanding for clinical trial searches.
 
 ## Key Improvements
 
@@ -43,7 +43,7 @@ RESPONSE FORMAT: Return a JSON object with structured filters...
 
 ### 2. **Comprehensive Query Understanding**
 
-The enhanced system can now understand:
+The enhanced system understands:
 
 - **Disease/Indication Terms**: cancer, diabetes, heart disease, etc.
 - **Drug Names**: semaglutide, pembrolizumab, checkpoint inhibitors, etc.
@@ -58,7 +58,7 @@ The enhanced system can now understand:
 
 ### 3. **Structured Output Format**
 
-The LLM now returns structured JSON with:
+The LLM returns structured JSON with:
 
 ```json
 {
@@ -76,8 +76,7 @@ The LLM now returns structured JSON with:
     },
     "query_intent": "Brief description of what the user is looking for",
     "search_strategy": "How to approach this search",
-    "confidence_score": 0.0-1.0,
-    "extracted_terms": ["list", "of", "key", "terms", "extracted"]
+    "confidence_score": 0.0-1.0
 }
 ```
 
@@ -98,28 +97,9 @@ The system provides confidence scores to help users understand query quality:
 - **Medium Confidence (0.5-0.7)**: Ambiguous or complex queries
 - **Low Confidence (0.0-0.5)**: Unclear or incomplete queries
 
-## Implementation Details
+## Example Queries and Results
 
-### Core Components
-
-1. **`_parse_natural_language_query()`**: Main LLM-based query parser
-2. **`_enhanced_fallback_parsing()`**: Advanced string-based fallback
-3. **`ClinicalTrialAnalyzerReasoning`**: Reasoning model integration
-4. **Enhanced error handling and validation**
-
-### Query Processing Flow
-
-```
-User Query → LLM Analysis → Structured Filters → Database Search → Results
-     ↓
-Fallback Processing (if LLM fails)
-     ↓
-Enhanced String Processing → Structured Filters → Database Search → Results
-```
-
-### Example Queries and Results
-
-#### Complex Multi-Criteria Query
+### Complex Multi-Criteria Query
 **Input:** "Find Phase 3 trials for metastatic bladder cancer using checkpoint inhibitors"
 
 **LLM Output:**
@@ -135,7 +115,7 @@ Enhanced String Processing → Structured Filters → Database Search → Result
 }
 ```
 
-#### Geographic and Status Query
+### Geographic and Status Query
 **Input:** "Show me recruiting diabetes trials with semaglutide in the US"
 
 **LLM Output:**
@@ -149,22 +129,6 @@ Enhanced String Processing → Structured Filters → Database Search → Result
     },
     "query_intent": "User wants currently recruiting diabetes trials using semaglutide in the United States",
     "confidence_score": 0.92
-}
-```
-
-#### Size-Based Query
-**Input:** "Large trials for breast cancer immunotherapy"
-
-**LLM Output:**
-```json
-{
-    "filters": {
-        "indication": "breast cancer",
-        "primary_drug": "immunotherapy",
-        "enrollment_min": 100
-    },
-    "query_intent": "User wants large clinical trials for breast cancer using immunotherapy",
-    "confidence_score": 0.88
 }
 ```
 
@@ -184,11 +148,6 @@ Enhanced String Processing → Structured Filters → Database Search → Result
 - System works even when LLM is unavailable
 - Sophisticated string processing as backup
 - Graceful degradation of functionality
-
-### 4. **Scalability**
-- Easy to add new query patterns and filters
-- Modular design for future enhancements
-- Comprehensive logging and monitoring
 
 ## Testing
 
@@ -212,18 +171,6 @@ OPENAI_API_KEY=your-openai-api-key
 ```
 
 ### Model Selection
-- **Default**: `o3-mini` (fast reasoning model)
-- **High Accuracy**: `o3` (most powerful reasoning model)
-- **Fallback**: `gpt-4o` (standard model)
-
-## Future Enhancements
-
-1. **Query Learning**: Learn from user feedback to improve accuracy
-2. **Custom Models**: Fine-tuned models for clinical trial queries
-3. **Multi-language Support**: Support for non-English queries
-4. **Query Suggestions**: Intelligent query completion and suggestions
-5. **Advanced Analytics**: Query pattern analysis and optimization
-
-## Conclusion
-
-The enhanced LLM-based query processing significantly improves the MCP implementation's ability to understand and process natural language queries. The combination of advanced LLM reasoning with robust fallback processing ensures reliable and accurate clinical trial searches. 
+- **Default**: `o4-mini` (fast reasoning model)
+- **High Accuracy**: `gpt-4o` (most powerful reasoning model)
+- **Fallback**: `gpt-4o-mini` (standard model) 

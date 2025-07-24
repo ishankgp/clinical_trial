@@ -19,6 +19,13 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 - Optional individual model result viewing
 - Batch analysis capabilities
 
+### 💬 Chat Assistant (with MCP)
+- Natural language querying across multiple trials
+- Advanced search capabilities with flexible filters
+- Trial comparison and statistical analysis
+- Data export in multiple formats
+- Conversation memory and context awareness
+
 ### 📈 Results History
 - View recent analysis files
 - System status monitoring
@@ -40,11 +47,12 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 
 3. **Run the Application:**
    ```bash
-   python run_ui.py
+   python main.py ui
    ```
    
    Or directly with Streamlit:
    ```bash
+   cd src/ui
    streamlit run app.py
    ```
 
@@ -70,10 +78,18 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 6. Optionally view individual model results
 7. Download comparison report
 
+### Chat Assistant (Optional)
+1. Set up MCP (see docs/MCP_SETUP_GUIDE.md)
+2. Go to the "Chat Assistant" tab
+3. Enter natural language queries
+4. View structured results and trial data
+5. Ask follow-up questions with context
+
 ### Results History
 - View recent analysis files
 - Check system status
 - Monitor cache usage
+- Download previous results
 
 ## 📊 Supported Models
 
@@ -92,6 +108,7 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 - **Organized Results:** Categorized display tabs
 - **Error Handling:** User-friendly error messages
 - **File Management:** Easy upload and download
+- **Dark Mode:** Comfortable viewing in low light
 
 ## 🔧 Technical Details
 
@@ -101,6 +118,7 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 - **Data Processing:** Pandas for data manipulation
 - **AI Models:** OpenAI API integration
 - **File Handling:** Local file system with caching
+- **Optional MCP:** Model Context Protocol for advanced features
 
 ### Performance
 - **Caching:** Automatic caching of API responses
@@ -115,18 +133,22 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 1. **"OpenAI API Key not found"**
    - Ensure `.env` file exists with correct API key
    - Check file permissions
+   - Verify API key is valid and has sufficient credits
 
 2. **"Missing dependencies"**
    - Run: `pip install -r requirements_ui.txt`
    - Check Python version (3.8+ required)
+   - Try installing specific packages manually
 
 3. **"Sample file not found"**
    - Ensure `NCT07046273.json` exists in project root
    - Or upload your own JSON file
+   - Check file path configuration
 
 4. **"Model not available"**
    - Check your OpenAI API access level
    - Some models may require specific API access
+   - Try using a different model
 
 ### Performance Tips
 
@@ -134,18 +156,27 @@ A modern, interactive web interface for analyzing clinical trials and comparing 
 - Enable caching for repeated analyses
 - Close unused browser tabs to free memory
 - Use smaller JSON files for quicker processing
+- Consider batch processing for multiple trials
 
 ## 📝 File Structure
 
 ```
 clinical_trial/
-├── app.py                 # Main Streamlit application
-├── run_ui.py             # Launcher script
-├── requirements_ui.txt   # UI dependencies
-├── README_UI.md         # This file
-├── .env                 # Environment variables
-├── NCT07046273.json    # Sample trial data
-└── cache/              # Cached API responses
+├── main.py                # Main entry point
+├── src/
+│   ├── ui/
+│   │   ├── app.py         # Streamlit application
+│   │   └── run_ui.py      # UI launcher
+│   ├── analysis/
+│   │   └── ...            # Analysis modules
+│   ├── mcp/               # Optional MCP components
+│   │   └── ...
+│   └── utils/
+│       └── ...            # Utility functions
+├── requirements_ui.txt    # UI dependencies
+├── docs/                  # Documentation
+├── .env                   # Environment variables
+└── cache/                 # Cached API responses
 ```
 
 ## 🔄 Updates
@@ -154,6 +185,8 @@ clinical_trial/
 - **v1.1:** Added model comparison features
 - **v1.2:** Enhanced UI with charts and history
 - **v1.3:** Added o4-mini model support
+- **v1.4:** Integrated MCP chat assistant
+- **v1.5:** Added dark mode and UI improvements
 
 ## 🤝 Contributing
 
@@ -171,9 +204,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For issues and questions:
 1. Check the troubleshooting section
-2. Review the technical documentation
+2. Review the documentation in `docs/`
 3. Open an issue on GitHub
-4. Contact the development team
 
 ---
 

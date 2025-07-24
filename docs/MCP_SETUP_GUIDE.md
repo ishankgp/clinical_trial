@@ -1,8 +1,17 @@
-# MCP Setup Guide
+# MCP Setup & Usage Guide
 
 ## 🤖 What is MCP?
 
-MCP (Model Context Protocol) is an advanced feature that allows you to query across multiple clinical trials using natural language. It provides intelligent analysis and comparison capabilities.
+MCP (Model Context Protocol) is an advanced feature that enables natural language querying across multiple clinical trials. It provides intelligent analysis, comparison capabilities, and advanced search functionality.
+
+## 🚀 Key Features
+
+- **Multi-Trial Storage**: Store and query across multiple clinical trials
+- **Natural Language Search**: Ask questions in plain English
+- **Advanced Filtering**: Search by drug, indication, phase, status, etc.
+- **Trial Comparison**: Compare multiple trials side-by-side
+- **Statistical Analysis**: Generate insights across trial databases
+- **Data Export**: Export results in CSV/JSON formats
 
 ## ⚠️ Current Status
 
@@ -29,30 +38,44 @@ pip install mcp
 ### **2. Start MCP Server**
 ```bash
 # Run the MCP server in a separate terminal
-python src/mcp/clinical_trial_mcp_server_fixed.py
+python src/mcp/clinical_trial_mcp_server.py
 ```
 
 ### **3. Configure MCP Client**
 The MCP chat interface will automatically connect to the server when available.
 
-## 📋 MCP Features
+## 📋 Available MCP Tools
 
-When MCP is properly configured, you get access to:
+When MCP is properly configured, you get access to these tools:
 
-- 🔍 **Natural Language Search**: "Find all diabetes trials with semaglutide"
-- 📊 **Trial Comparison**: "Compare NCT03778931 and NCT04516746"
-- 📈 **Advanced Statistics**: "Show me statistics grouped by trial phase"
-- 💊 **Drug Analysis**: "Find trials using checkpoint inhibitors"
-- 📤 **Data Export**: "Export all Phase 3 trials to CSV"
+### **Core Storage & Analysis**
+1. **`store_trial`**: Store and analyze clinical trials
+2. **`analyze_trial_with_model`**: Analyze with specific models
+3. **`get_available_columns`**: List database schema
+
+### **Advanced Search**
+4. **`search_trials`**: Flexible search with filters
+5. **`smart_search`**: Natural language search
+6. **`get_trials_by_drug`**: Find trials by drug name
+7. **`get_trials_by_indication`**: Find trials by disease
+
+### **Analysis & Comparison**
+8. **`get_trial_details`**: Detailed trial information
+9. **`compare_trials`**: Side-by-side comparison
+10. **`get_trial_statistics`**: Statistical analysis
+
+### **Data Export**
+11. **`export_trials`**: Export to CSV/JSON formats
 
 ## 🎯 Example MCP Queries
 
 ```
-"Find all trials for diabetes treatment"
-"Compare the efficacy of different cancer drugs"
-"Show me Phase 3 trials with more than 1000 patients"
-"What are the most common biomarkers in oncology trials?"
-"Export all trials from 2023 to Excel"
+"Find all diabetes trials with semaglutide"
+"Show me phase 3 recruiting trials"
+"What trials are there for cancer treatment?"
+"Compare NCT07046273 and NCT04895709"
+"Generate statistics grouped by trial phase"
+"Export all phase 3 trials to CSV"
 ```
 
 ## 🔍 Troubleshooting
@@ -126,13 +149,34 @@ python main.py setup
 pip install mcp
 
 # 3. Start MCP server (in separate terminal)
-python src/mcp/clinical_trial_mcp_server_fixed.py
+python src/mcp/clinical_trial_mcp_server.py
 
 # 4. Start the UI
 python main.py ui
 
 # 5. Use advanced features!
 ```
+
+## 🏗️ Technical Architecture
+
+```
+User Query → Chat Interface → OpenAI LLM → Function Calling → MCP Server → Database → Results
+```
+
+### **Data Flow**
+1. **User Input**: Natural language or structured query
+2. **LLM Processing**: OpenAI interprets intent and selects tools
+3. **MCP Execution**: Server processes request using appropriate tools
+4. **Database Query**: SQLite database returns relevant trials
+5. **Result Formatting**: Results formatted as requested
+6. **Response**: Comprehensive answer with context
+
+## 🔧 Model Integration
+
+- **GPT-4o**: Fast, JSON schema support
+- **GPT-4o-mini**: Cost-effective analysis
+- **o4-mini**: Reasoning-optimized
+- **GPT-4**: Comprehensive analysis
 
 ## 🆘 Support
 
