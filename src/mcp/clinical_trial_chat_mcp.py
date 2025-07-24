@@ -41,7 +41,9 @@ class ClinicalTrialChatMCP:
     def _load_analysis_document(self):
         """Load the clinical trial analysis specification document"""
         try:
-            doc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
+            # Use absolute path with os.path.abspath to ensure correct path resolution
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+            doc_path = os.path.join(project_root, 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
             if os.path.exists(doc_path):
                 with open(doc_path, 'r', encoding='utf-8') as f:
                     self.analysis_document = f.read()
@@ -299,12 +301,8 @@ class ClinicalTrialChatMCP:
     def _call_mcp_function(self, function_name: str, arguments: Dict[str, Any]) -> str:
         """Call MCP function and return result"""
         try:
-            # Import database directly for real data access
-            import sys
-            database_path = os.path.join(os.path.dirname(__file__), '..', 'database')
-            if database_path not in sys.path:
-                sys.path.append(database_path)
-            from clinical_trial_database import ClinicalTrialDatabase
+            # Import database using absolute import
+            from src.database.clinical_trial_database import ClinicalTrialDatabase
             
             db = ClinicalTrialDatabase()
             
@@ -409,11 +407,7 @@ class ClinicalTrialChatMCP:
                 # Use enhanced LLM-based query processing
                 try:
                     # Import the reasoning analyzer for advanced query processing
-                    import sys
-                    analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-                    if analysis_path not in sys.path:
-                        sys.path.append(analysis_path)
-                    from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     
                     # Get API key for the analyzer
                     api_key = os.getenv("OPENAI_API_KEY")
@@ -539,11 +533,7 @@ class ClinicalTrialChatMCP:
                 
                 # Use the reasoning analyzer with document attachment for o3 models
                 try:
-                    import sys
-                    analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-                    if analysis_path not in sys.path:
-                        sys.path.append(analysis_path)
-                    from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=reasoning_model)
                     
                     # Enhanced query analysis with document attachment for o3 models
@@ -634,11 +624,7 @@ class ClinicalTrialChatMCP:
                 
                 # Use reasoning model for trend analysis
                 try:
-                    import sys
-                    analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-                    if analysis_path not in sys.path:
-                        sys.path.append(analysis_path)
-                    from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     model = "o3" if group_by == "expert" else "o3-mini"
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
                     
@@ -878,7 +864,9 @@ Use the detailed specifications in the attached document to ensure accurate extr
 """
             
             # Prepare the specification document attachment
-            doc_path = os.path.join(os.path.dirname(__file__), '..', '..', 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
+            # Use absolute path with os.path.abspath to ensure correct path resolution
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+            doc_path = os.path.join(project_root, 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
             
             if os.path.exists(doc_path):
                 # Read the specification document content

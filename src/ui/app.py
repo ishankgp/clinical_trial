@@ -17,28 +17,19 @@ from dotenv import load_dotenv
 
 # Add src to Python path for imports
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
-# Import analyzers using dynamic path resolution
-analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-if analysis_path not in sys.path:
-    sys.path.append(analysis_path)
-from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-from clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
+# Import analyzers using absolute imports
+from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+from src.analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
 
 try:
-    # Try to import MCP chat module with specific path to avoid conflicts
-    mcp_path = os.path.join(os.path.dirname(__file__), '..', 'mcp')
-    if mcp_path not in sys.path:
-        sys.path.insert(0, mcp_path)  # Insert at beginning to prioritize our module
-    import clinical_trial_chat_mcp
-    ClinicalTrialChatMCP = clinical_trial_chat_mcp.ClinicalTrialChatMCP
+    # Try to import MCP chat module using absolute imports
+    from src.mcp.clinical_trial_chat_mcp import ClinicalTrialChatMCP
     
     # Also import MCP checker
-    utils_path = os.path.join(os.path.dirname(__file__), '..', 'utils')
-    if utils_path not in sys.path:
-        sys.path.append(utils_path)
-    from mcp_checker import check_mcp_availability, get_mcp_status_message, get_mcp_setup_instructions
+    from src.utils.mcp_checker import check_mcp_availability, get_mcp_status_message, get_mcp_setup_instructions
     
 except ImportError as e:
     # Fallback if MCP module is not available
@@ -968,11 +959,8 @@ def main():
             with col2:
                 # Check database status
                 try:
-                    # Import database using dynamic path resolution
-                    database_path = os.path.join(os.path.dirname(__file__), '..', 'database')
-                    if database_path not in sys.path:
-                        sys.path.append(database_path)
-                    from clinical_trial_database import ClinicalTrialDatabase
+                    # Import database using absolute import
+                    from src.database.clinical_trial_database import ClinicalTrialDatabase
                     db = ClinicalTrialDatabase()
                     trials = db.search_trials({}, 1)
                     st.success(f"✅ Database: {len(trials)}+ trials")

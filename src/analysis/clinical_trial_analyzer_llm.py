@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from .base_analyzer import BaseAnalyzer
+from src.analysis.base_analyzer import BaseAnalyzer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from .base_analyzer import BaseAnalyzer
+from src.analysis.base_analyzer import BaseAnalyzer
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -217,10 +217,186 @@ Return a JSON object with the following structure:
             conditions = protocol.get("conditionsModule", {})
             arms = protocol.get("armsInterventionsModule", {})
             
+            # Create a more detailed prompt with specific rules and examples from the specification document
+            prompt = f"""
+            Analyze the following clinical trial information and extract drug-related fields according to the specified rules:
+
+            TRIAL INFORMATION:
+            NCT ID: {identification.get("nctId", "")}
+            BRIEF TITLE: {identification.get("briefTitle", "")}
+            OFFICIAL TITLE: {identification.get("officialTitle", "")}
+            BRIEF SUMMARY: {description.get("briefSummary", "")}
+            CONDITIONS: {conditions.get("conditions", [])}
+            ARM GROUPS: {json.dumps(arms.get("armGroups", []), indent=2)}
+            INTERVENTIONS: {json.dumps(arms.get("interventions", []), indent=2)}
+
+            EXTRACTION RULES WITH EXAMPLES:
+
+            1. PRIMARY DRUG:
+               - Source: Brief Title, Brief Summary, Description, Official Title, Intervention sections
+               - Identify the primary investigational drug being tested in the trial
+               - Focus on the trial's main objective and evaluation focus
+               - EXCLUDE active comparators (e.g., "vs chemo" or "Active Comparator: Chemo")
+               - DO NOT consider background therapies or standard-of-care agents as primary unless part of novel investigational combination
+               - For novel combinations of two investigational agents, consider both drugs as primary
+               - Standardize to generic drug name (e.g., "pembrolizumab" not "Keytruda")
+               - Use code name if generic name unavailable
+               
+               EXAMPLE 1:
+               NCT ID: NCT06592326
+               Title: 9MW2821 in Combination with Toripalimab vs Standard Chemotherapy in Locally Advanced or Metastatic Urothelial Cancer
+               PRIMARY DRUG OUTPUT: 9MW2821
+               JUSTIFICATION: Toripalimab is a combination partner; standard chemo is a comparator
+               
+               EXAMPLE 2:
+               NCT ID: NCT06225596
+               Title: Study BT8009-230 in Participants with Locally Advanced or Metastatic Urothelial Cancer (Duravelo-2)
+               PRIMARY DRUG OUTPUT: BT8009-230
+               JUSTIFICATION: The drug is evaluated in mono arm and is primary focus
+
+            2. PRIMARY DRUG MOA (Mechanism of Action):
+               - Standardize using these formats:
+                 * Antibodies: "Anti-[Target]" (e.g., "Anti-Nectin-4", "Anti-PD-1")
+                 * Small molecules: "[Target] inhibitor" (e.g., "PARP inhibitor", "EGFR inhibitor")
+                 * Bispecifics: "Anti-[Target] × [Target]" (e.g., "Anti-PD-1 × CTLA-4")
+                 * Trispecifics: "Anti-[Target] × [Target] × [Target]"
+                 * Agonists: "[Target] agonist" (e.g., "TLR9 agonist")
+                 * Antagonists: "[Target] antagonist" (e.g., "CCR4 antagonist")
+                 
+               EXAMPLE 1:
+               NCT ID: NCT05827614
+               Brief Summary: BBI-355 is an oral, potent, selective checkpoint kinase 1 (or CHK1) small molecule inhibitor
+               MOA OUTPUT: Anti-CHK1
+               JUSTIFICATION: BBI-355 is the primary drug and its mechanism given in the summary
+               
+               EXAMPLE 2:
+               NCT ID: NCT03557918
+               Title: Trial of Tremelimumab in Patients With Previously Treated Metastatic Urothelial Cancer
+               MOA OUTPUT: Anti-CTLA-4
+               JUSTIFICATION: Tremelimumab is the primary drug and its mechanism is Anti-CTLA-4
+
+            3. PRIMARY DRUG TARGET:
+               - Extract the molecular or biological target of the primary drug
+               - Align with the MoA (e.g., MoA: Anti-Nectin-4 → Target: Nectin-4)
+               - Use the target name only (e.g., Nectin-4, PD-1, c-MET)
+               - Do not include prefixes like "Anti-" or suffixes like "-inhibitor"
+               
+               EXAMPLE 1:
+               NCT ID: NCT05827614
+               Brief Summary: BBI-355 is an oral, potent, selective checkpoint kinase 1 (or CHK1) small molecule inhibitor
+               TARGET OUTPUT: CHK1
+               JUSTIFICATION: BBI-355 is the primary drug and its target is CHK1
+               
+               EXAMPLE 2:
+               NCT ID: NCT06592326
+               Title: 9MW2821 in Combination With Toripalimab vs Standard Chemotherapy in Locally Advanced or Metastatic Urothelial Cancer
+               TARGET OUTPUT: Nectin-4
+               JUSTIFICATION: 9MW2821 is an Anti-Nectin-4 drug, so the target is Nectin-4
+
+            4. PRIMARY DRUG MODALITY:
+               - Standardize terminology:
+                 * "Antibody-drug conjugate" → ADC
+                 * "T-cell redirecting bispecific" → T-cell engager
+                 * "Chimeric antigen receptor T cell" → CAR-T
+               - Tagging Rules:
+                 * Drugs ending in -mab → Monoclonal antibody
+                 * Drugs ending in -tinib → Small molecule
+                 * Gene-altering/encoding drugs → Gene therapy
+                 * Radiolabeled ligands → Radiopharmaceutical
+                 * Cell-based therapies (NK, T-cell) → Cell therapy
+                 
+               EXAMPLE 1:
+               NCT ID: NCT07012031
+               Brief Summary: Trastuzumab deruxtecan is in a class of medications called antibody-drug conjugates
+               MODALITY OUTPUT: ADC
+               JUSTIFICATION: Trastuzumab deruxtecan is the primary drug and its modality given in the summary
+               
+               EXAMPLE 2:
+               NCT ID: NCT06592326
+               Title: 9MW2821 in Combination With Toripalimab vs Standard Chemotherapy in Locally Advanced or Metastatic Urothelial Cancer
+               MODALITY OUTPUT: ADC
+               JUSTIFICATION: 9MW2821 is an antibody-drug conjugate
+
+            5. PRIMARY DRUG ROA (Route of Administration):
+               - Standardized formats:
+                 * Intravenous (IV)
+                 * Subcutaneous (SC)
+                 * Oral
+                 * Intratumoral (IT)
+               - Do not infer ROA unless clearly stated
+               
+               EXAMPLE:
+               NCT ID: NCT06592326
+               Intervention: Drug: 9MW2821, 1.25mg/kg, intravenous (IV) infusion
+               ROA OUTPUT: Intravenous (IV)
+               JUSTIFICATION: Primary drug is 9MW2821 and ROA is intravenous
+
+            6. MONO/COMBO CLASSIFICATION:
+               - Mono: Drug evaluated alone (not in combination)
+               - Combo: Drug evaluated in combination with one or more drugs
+               - Special Cases: Profile mono and combo separately if both evaluated
+               
+               EXAMPLE 1:
+               NCT ID: NCT06592326
+               Arm: Experimental: 9MW2821+Toripalimab
+               MONO/COMBO OUTPUT: Combo
+               JUSTIFICATION: 9MW2821 is evaluated in combination with Toripalimab
+               
+               EXAMPLE 2:
+               NCT ID: NCT05253053
+               Arms: Arm A: TT-00420 Tablet Monotherapy; Arm B: TT-00420 tablet in combination with Atezolizumab
+               MONO/COMBO OUTPUT: Both Mono and Combo (separate rows)
+               JUSTIFICATION: TT-00420 is evaluated in different arms with multiple combination regimens
+
+            7. COMBINATION PARTNER:
+               - Extract combination partners evaluated with the primary drug
+               - Do not consider active comparators as combination partners
+               - If multiple combination partners in a single arm, separate with "+"
+               
+               EXAMPLE:
+               NCT ID: NCT06592326
+               Arm: Experimental: 9MW2821+Toripalimab
+               COMBINATION PARTNER OUTPUT: Toripalimab
+               JUSTIFICATION: 9MW2821 is the primary drug of evaluation; Toripalimab is the combination partner
+
+            8. MOA OF COMBINATION:
+               - Extract MoAs for all combination partners (not primary drug)
+               - Use the same standardization rules as for primary drug MoA
+               - For multiple partners, separate MoAs with "+"
+               
+               EXAMPLE:
+               NCT ID: NCT05827614
+               Arms: Combination therapy of BBI-355 and EGFR inhibitor erlotinib
+               MOA OF COMBINATION OUTPUT: Anti-EGFR
+               JUSTIFICATION: Erlotinib is an EGFR inhibitor, so its MoA is Anti-EGFR
+
+            9. EXPERIMENTAL REGIMEN:
+               - For mono: Name of primary drug
+               - For combo: Name of primary drug + combination partners
+               
+               EXAMPLE:
+               NCT ID: NCT05827614
+               Arms: Combination therapy of BBI-355 and EGFR inhibitor erlotinib
+               EXPERIMENTAL REGIMEN OUTPUT: BBI-355 + Erlotinib
+               JUSTIFICATION: Primary drug + Combination partner
+
+            10. MOA OF EXPERIMENTAL REGIMEN:
+                - For mono: MoA of primary drug
+                - For combo: MoA of primary drug + MoA of combination partners
+                
+                EXAMPLE:
+                NCT ID: NCT05827614
+                Arms: Combination therapy of BBI-355 and EGFR inhibitor erlotinib
+                MOA OF EXPERIMENTAL REGIMEN OUTPUT: CHK1 Inh + Anti-EGFR
+                JUSTIFICATION: MOA of Primary drug + MOA of Combination partner
+
+            Return a JSON object with these fields. If information is not available, use "NA".
+            """
+            
             # Prepare request parameters
             request_params = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": self._create_drug_fields_prompt(trial_data)}],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 1500
             }
@@ -249,10 +425,8 @@ Return a JSON object with the following structure:
                 else:
                     raise ValueError(f"Invalid JSON response: {e}")
             
-            # Standardize field names
-            standardized_result = {}
-            for key, value in result.items():
-                standardized_result[key] = value if value else "NA"
+            # Apply standardization rules
+            standardized_result = self._standardize_drug_fields(result)
             
             return standardized_result
             
@@ -287,11 +461,141 @@ Return a JSON object with the following structure:
             description = protocol.get("descriptionModule", {})
             conditions = protocol.get("conditionsModule", {})
             eligibility = protocol.get("eligibilityModule", {})
+            design = protocol.get("designModule", {})
+            
+            # Create enhanced prompt with specific rules and examples from the specification document
+            prompt = f"""
+            Analyze the following clinical trial information and extract clinical fields according to the specified rules:
+
+            TRIAL INFORMATION:
+            NCT ID: {identification.get("nctId", "")}
+            BRIEF TITLE: {identification.get("briefTitle", "")}
+            OFFICIAL TITLE: {identification.get("officialTitle", "")}
+            BRIEF SUMMARY: {description.get("briefSummary", "")}
+            DETAILED DESCRIPTION: {description.get("detailedDescription", "")}
+            CONDITIONS: {conditions.get("conditions", [])}
+            ELIGIBILITY CRITERIA: {eligibility.get("eligibilityCriteria", "")}
+            STUDY DESIGN: {json.dumps(design, indent=2)[:1000]}
+
+            EXTRACTION RULES WITH EXAMPLES:
+
+            1. INDICATION:
+               - Source: Title, official title, brief summary, detailed description, conditions, inclusion criteria
+               - Extract all disease indications studied in the clinical trial
+               - Classify indications into:
+                 * Primary disease of interest/scope (e.g., Bladder Cancer)
+                 * All other disease indications studied in the trial
+               - Use exact or closely mapped disease names as described in the trial record
+               - Group and deduplicate disease names logically
+               - If general terms like "advanced solid tumors" are listed, extract all specific disease names
+               
+               EXAMPLE:
+               NCT ID: NCT05253053
+               Conditions: Advanced Solid Tumor, Cholangiocarcinoma, Biliary Tract Cancer, HER2-negative Breast Cancer, Triple Negative Breast Cancer, Small-cell Lung Cancer, Bladder Cancer, Prostate Cancer, Thyroid Cancer, Gastric Cancer, Gallbladder Cancer
+               INDICATION OUTPUT: Bladder Cancer + Solid tumors
+               JUSTIFICATION: For a trial with focus indication = Bladder Cancer, and listing other tumors
+
+            2. LINE OF THERAPY (LOT):
+               - Source: Brief summary, study description, official title, inclusion criteria, study title
+               - Rules to map line of treatment:
+                 * 1L: Treatment-naive or previously untreated patients or newly diagnosed
+                 * 2L: Patients treated with no more than 1 prior therapy
+                 * 2L+: Patients treated with ≥1 prior therapy, or who have no standard of care options left, or are refractory/intolerant to SOC
+                 * Adjuvant: Treatment given after the primary therapy (typically surgery)
+                 * Neoadjuvant: Treatment given before the primary therapy
+                 * Maintenance: Ongoing treatment given after initial successful therapy
+                 * 1L-Maintenance: Given after 1st-line treatment
+                 * 2L-Maintenance: Given after completing 2nd line treatment
+               
+               EXAMPLE 1:
+               NCT ID: NCT02451423
+               Title: Neoadjuvant Atezolizumab in Localized Bladder Cancer
+               LOT OUTPUT: Neoadjuvant
+               JUSTIFICATION: Neoadjuvant therapy as denoted by title itself
+               
+               EXAMPLE 2:
+               NCT ID: NCT06592326
+               Inclusion criteria: Previously untreated with local advanced or metastatic urothelial cancer
+               LOT OUTPUT: 1L
+               JUSTIFICATION: Previously untreated as per definition is 1L
+
+            3. HISTOLOGY:
+               - Source: Official Title, Brief Summary, Study Description and Inclusion Criteria, intervention
+               - Extract the disease histology described in the trial (e.g., urothelial carcinoma, adenocarcinoma)
+               - Histology should be co-related with disease if the exact histology is not given
+               
+               EXAMPLE:
+               NCT ID: NCT05203913
+               Inclusion criteria: Histologic diagnosis of predominantly urothelial carcinoma of the bladder. Focal differentiation allowed other than small cell histology.
+               HISTOLOGY OUTPUT: Urothelial carcinoma
+               JUSTIFICATION: Histology type of the indication of interest mentioned in inclusion criteria
+
+            4. PRIOR TREATMENT:
+               - Source: Inclusion criteria, Brief Summary, Study Description, Official Title
+               - List all therapies that participants must have received prior to enrolling
+               - If specific prior therapies are mentioned, list them explicitly
+               - If the trial states that participants have not received any prior therapy, tag as "treatment naive"
+               - Use "NA" if no information is available regarding prior treatment
+               
+               EXAMPLE 1:
+               NCT ID: NCT03871036
+               Brief summary: This trial will include metastatic urothelial carcinoma patients who progressed during or after treatment with anti-PD(L)1 therapy and have been treated by a platinum-containing regimen or are cisplatin-ineligible.
+               PRIOR TREATMENT OUTPUT: Anti-PD-L1 or Platinum based chemotherapy
+               JUSTIFICATION: Prior therapy progression information given in brief summary
+               
+               EXAMPLE 2:
+               NCT ID: NCT04165317
+               Inclusion criteria: Histological confirmed diagnosis of BCG-unresponsive high-risk, non-muscle invasive TCC of the urothelium within 12 months (CIS only) or 6 months (recurrent Ta/T1 disease) of completion of adequate BCG therapy.
+               PRIOR TREATMENT OUTPUT: BCG
+               JUSTIFICATION: Prior therapy progression information given in Inclusion criteria
+
+            5. STAGE OF DISEASE:
+               - Source: Official Title, Brief Summary, Detailed Description, Eligibility Criteria
+               - Tag as Stage 4 if the trial mentions "metastatic" or "advanced cancer"
+               - Tag as Stage 3/Stage 4 if the trial mentions "locally advanced" or "locally advanced/metastatic"
+               - Tag as Stage 1/2 if the trial refers to early-stage disease
+               - If not evident, include any TNM staging information
+               
+               EXAMPLE 1:
+               NCT ID: NCT05911295
+               Official title: An Open-label, Randomized, Controlled Phase 3 Study of Disitamab Vedotin in Combination With Pembrolizumab Versus Chemotherapy in Subjects With Previously Untreated Locally Advanced or Metastatic Urothelial Carcinoma That Expresses HER2 (IHC 1+ and Greater)
+               STAGE OUTPUT: Stage 3/4
+               JUSTIFICATION: Locally advanced or metastatic disease
+               
+               EXAMPLE 2:
+               NCT ID: NCT04486781
+               Brief summary: sEphB-HSA may prevent tumor cells from multiplying and blocks several compounds that promote the growth of blood vessels that bring nutrients to the tumor. The purpose of this study is to evaluate the combination of Pembrolizumab + sEphB4-HSA in the population of patients with previously untreated advanced (metastatic or recurrent) urothelial carcinoma who are chemotherapy ineligible or who refuse chemotherapy.
+               STAGE OUTPUT: Stage 4
+               JUSTIFICATION: Metastatic disease
+
+            6. PATIENT POPULATION:
+               - Source: Brief summary, official title, and inclusion criteria
+               - Consider disease stage, type of disease, mutations, prior therapies
+               - Capture patient population for each arm/cohort specifically
+               
+               EXAMPLE:
+               NCT ID: NCT06592326
+               Inclusion criteria: Previously untreated local advanced or metastatic urothelial cancer suitable for cisplatin/carboplatin-based chemotherapy
+               PATIENT POPULATION OUTPUT: Previously untreated local advanced or metastatic urothelial cancer suitable for cisplatin/carboplatin-based chemotherapy
+               JUSTIFICATION: Patient population specified from inclusion criteria considering type of cancer and previous treatment
+               
+            7. TRIAL NAME:
+               - Source: Trial title, official title, or "Other Study ID Numbers"
+               - Capture the trial acronym if available
+               
+               EXAMPLE:
+               NCT ID: NCT05243550
+               Title: A Phase 3 Single-Arm Study of UGN-102 for Treatment of Low-Grade Intermediate-Risk Non-Muscle Invasive Bladder Cancer (ENVISION)
+               TRIAL NAME OUTPUT: ENVISION
+               JUSTIFICATION: Trial acronym from the title
+
+            Return a JSON object with these fields. If information is not available, use "NA".
+            """
             
             # Prepare request parameters
             request_params = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": self._create_clinical_fields_prompt(trial_data)}],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 1500
             }
@@ -320,10 +624,8 @@ Return a JSON object with the following structure:
                 else:
                     raise ValueError(f"Invalid JSON response: {e}")
             
-            # Standardize field names
-            standardized_result = {}
-            for key, value in result.items():
-                standardized_result[key] = value if value else "NA"
+            # Apply standardization rules
+            standardized_result = self._standardize_clinical_fields(result)
             
             return standardized_result
             
@@ -355,11 +657,93 @@ Return a JSON object with the following structure:
             description = protocol.get("descriptionModule", {})
             conditions = protocol.get("conditionsModule", {})
             eligibility = protocol.get("eligibilityModule", {})
+            outcomes = protocol.get("outcomesModule", {})
+            
+            # Create enhanced prompt with specific rules and examples from the specification document
+            prompt = f"""
+            Analyze the following clinical trial information and extract biomarker-related fields according to the specified rules:
+
+            TRIAL INFORMATION:
+            NCT ID: {identification.get("nctId", "")}
+            BRIEF TITLE: {identification.get("briefTitle", "")}
+            OFFICIAL TITLE: {identification.get("officialTitle", "")}
+            BRIEF SUMMARY: {description.get("briefSummary", "")}
+            DETAILED DESCRIPTION: {description.get("detailedDescription", "")}
+            CONDITIONS: {conditions.get("conditions", [])}
+            ELIGIBILITY CRITERIA: {eligibility.get("eligibilityCriteria", "")}
+            OUTCOME MEASURES: {json.dumps(outcomes.get("primaryOutcomes", []) + outcomes.get("secondaryOutcomes", []), indent=2)[:1000]}
+
+            EXTRACTION RULES WITH EXAMPLES:
+
+            1. BIOMARKER (MUTATIONS):
+               - Source: Official title, brief summary, study description, inclusion criteria, outcome measures
+               - Extract all biomarkers mentioned in the clinical trial
+               - Look for keywords: mutation, amplification, expression, fusion, biomarkers, actionable molecular alteration
+               - Do NOT consider biomarkers mentioned in the background or exclusion criteria
+               - Most common biomarkers include: HER2, PD-L1, EGFR, HLA-A*02:01, PIK3CA, TROP2, MAGE-A4, MSI-H/dMMR, ALK, ROS1, BRAF, RET, MET, KRAS, Nectin-4, TP53, 5T4, MTAP, CD39, CD103, CD8+, B7-H3
+               - Standardization:
+                 * Use standard gene symbols (e.g., HER2, not ErbB2)
+                 * Maintain proper formatting (e.g., PD-L1, not PDL1 or PD L1)
+                 * Preserve special characters and numbering (e.g., HLA-A*02:01)
+                 * Group related variations (e.g., dMMR and MSI-H → dMMR/MSI-H)
+               
+               EXAMPLE 1:
+               NCT ID: NCT06319820
+               Official title: A Phase 3, Randomized Study Evaluating the Efficacy and Safety of TAR-210 Erdafitinib Intravesical Delivery System Versus Single Agent Intravesical Chemotherapy in Participants With Intermediate-risk Non-muscle Invasive Bladder Cancer (IR-NMIBC) and Susceptible FGFR Alterations
+               BIOMARKER OUTPUT: FGFR
+               JUSTIFICATION: Patients with FGFR mutations as specified in title
+               
+               EXAMPLE 2:
+               NCT ID: NCT05203913
+               Outcome Measure: Median Disease Free Survival by PD-L1 expression and by PI3KCA mutations
+               BIOMARKER OUTPUT: PI3KCA, PD-L1
+               JUSTIFICATION: Patients with PI3KCA mutations and PD-L1 expression comparisons as mentioned in outcome measures
+
+            2. BIOMARKER STRATIFICATION:
+               - Source: Study description, inclusion criteria
+               - Extract biomarker expression levels mentioned in the inclusion criteria
+               - Capture levels as mentioned in the trial (e.g., CPS ≥ 10, IHC 3+, TPS ≥ 1%)
+               - Include scoring systems: Combined Positive Score (CPS), Immunohistochemistry (IHC), Tumor Proportion Score (TPS)
+               - Example formats: "PD-L1 CPS ≥ 10", "HER2 expression (IHC3+, IHC2+/FISH+)"
+               
+               EXAMPLE 1:
+               NCT ID: NCT05940896
+               Inclusion criteria: HER2 expression is confirmed by the site: IHC 1+, 2+ or 3+
+               STRATIFICATION OUTPUT: IHC 1+, 2+or 3+
+               JUSTIFICATION: The expression levels for HER biomarker as given in inclusion criteria include IHC 1+, 2+or 3+
+               
+               EXAMPLE 2:
+               NCT ID: NCT02256436
+               Detailed Description: For the purposes of this study, participants with a programmed cell death-ligand 1 (PD-L1) combined positive score (CPS) ≥10% were considered to have a strongly PD-L1 positive tumor status and participants with PD-L1 CPS ≥1% were considered to have a PD-L1 positive tumor status.
+               STRATIFICATION OUTPUT: CPS ≥1% or CPS ≥10%
+               JUSTIFICATION: The expression levels for PD-L1 biomarker as given in the trial description as PD-L1 positive score
+
+            3. BIOMARKER (WILDTYPE):
+               - Source: Official title, brief summary, study description, inclusion criteria, outcome measures
+               - Extract all wild type biomarkers mentioned in the clinical trial
+               - Look for keywords: "Wild type", "non mutated", "Mutation-negative", "Negative for [specific mutation]", "Lacking [specific mutation]", "[Gene] negative by NGS/IHC/FISH/PCR", "WT" mutation, "Biomarker-negative"
+               - Standardized format: Always use the gene name followed by the status
+                 * Examples: "KRAS wild-type", "EGFR T790M-negative", "BRAF V600E-negative", "ALK-negative"
+               
+               EXAMPLE 1:
+               NCT ID: NCT05512377
+               Official title: Brightline-2: A Phase IIa/IIb, Open-label, Single-arm, Multi-centre Trial of BI 907828 (Brigimadlin) for Treatment of Patients With Locally Advanced / Metastatic, MDM2 Amplified, TP53 Wild-type Biliary Tract Adenocarcinoma, Pancreatic Ductal Adenocarcinoma, or Other Selected Solid Tumours
+               WILDTYPE BIOMARKER OUTPUT: TP53
+               JUSTIFICATION: Wild type TP53 biomarker mentioned in title itself
+               
+               EXAMPLE 2:
+               NCT ID: NCT05827614
+               Inclusion criteria: BBI-355 combination with erlotinib arm: Evidence of amplification of wildtype EGFR; BBI-355 combination with futibatinib arm: Evidence of amplification of wildtype FGFR1, FGFR2, FGFR3, or FGFR4
+               WILDTYPE BIOMARKER OUTPUT: EGFR (Row 2), FGFR1, FGFR2, FGFR3, or FGFR4 (Row 3)
+               JUSTIFICATION: Specific wild type mutations for each combination arm separately mentioned in the inclusion criteria
+
+            Return a JSON object with these three biomarker fields. If information is not available, use "NA".
+            """
             
             # Prepare request parameters
             request_params = {
                 "model": self.model,
-                "messages": [{"role": "user", "content": self._create_biomarker_fields_prompt(trial_data)}],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 1500
             }
@@ -388,10 +772,8 @@ Return a JSON object with the following structure:
                 else:
                     raise ValueError(f"Invalid JSON response: {e}")
             
-            # Standardize field names
-            standardized_result = {}
-            for key, value in result.items():
-                standardized_result[key] = value if value else "NA"
+            # Apply standardization rules
+            standardized_result = self._standardize_biomarker_fields(result)
             
             return standardized_result
             
@@ -423,12 +805,51 @@ Return a JSON object with the following structure:
         if not trial_data:
             return {"error": f"Could not load trial data for {nct_id}"}
         
-        # Use comprehensive analysis with document attachment for o3 models
-        if self.model in ["o3"]:
-            return self._analyze_trial_with_document_attachment(nct_id, trial_data)
+        # Use legacy method for all models since document attachment is failing for o3
+        # We'll revisit the document attachment approach after further testing
+        result = self._analyze_trial_legacy(nct_id, trial_data)
+        
+        # Check if the trial should be split into multiple rows
+        if self._should_split_into_multiple_rows(trial_data, result):
+            # Return the first row of the split results
+            # The full set of rows can be retrieved using analyze_trial_multi_row
+            logger.info(f"Trial {nct_id} can be split into multiple rows. Use analyze_trial_multi_row for all rows.")
+            return result
+        
+        return result
+    
+    def analyze_trial_multi_row(self, nct_id: str, json_file_path: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Analyze a clinical trial and return multiple rows if needed based on splitting criteria
+        
+        Args:
+            nct_id: NCT ID of the trial
+            json_file_path: Optional path to JSON file
+            
+        Returns:
+            List of dictionaries, each representing a row in the analysis
+        """
+        # Get trial data
+        if json_file_path:
+            trial_data = self.load_trial_data_from_file(json_file_path)
         else:
-            # Fallback to existing method for non-o3 models
-            return self._analyze_trial_legacy(nct_id, trial_data)
+            trial_data = self.fetch_trial_data(nct_id)
+            
+        if not trial_data:
+            return [{"error": f"Could not load trial data for {nct_id}"}]
+        
+        # Use legacy method for all models since document attachment is failing for o3
+        result = self._analyze_trial_legacy(nct_id, trial_data)
+        
+        # Check if the trial should be split into multiple rows
+        if self._should_split_into_multiple_rows(trial_data, result):
+            # Split the result into multiple rows
+            rows = self._split_into_multiple_rows(trial_data, result)
+            logger.info(f"Trial {nct_id} split into {len(rows)} rows.")
+            return rows
+        
+        # Return the single result as a list for consistency
+        return [result]
     
     def _analyze_trial_with_document_attachment(self, nct_id: str, trial_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -624,35 +1045,233 @@ I have provided you with:
             logger.error(f"Error uploading document: {e}")
             raise
     
+    def _validate_analysis_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate the analysis result against expected formats and rules
+        
+        Args:
+            result: Dictionary containing analysis results
+            
+        Returns:
+            Dictionary with validated and corrected fields
+        """
+        validated = result.copy()
+        
+        # Required fields from the specification
+        required_fields = [
+            "nct_id", "trial_id", "trial_name", "trial_phase", "trial_status", 
+            "primary_drug", "primary_drug_moa", "primary_drug_target", "primary_drug_modality", 
+            "indication", "primary_drug_roa", "mono_combo", "combination_partner", 
+            "moa_of_combination", "experimental_regimen", "moa_of_experimental_regimen", 
+            "line_of_therapy", "biomarker_mutations", "biomarker_stratification", 
+            "biomarker_wildtype", "histology", "prior_treatment", "stage_of_disease", 
+            "patient_enrollment", "sponsor_type", "sponsor", "collaborator", "developer", 
+            "start_date", "primary_completion_date", "study_completion_date", 
+            "primary_endpoints", "secondary_endpoints", "patient_population", 
+            "inclusion_criteria", "exclusion_criteria", "trial_countries", "geography", 
+            "investigator_name", "investigator_designation", "investigator_qualification", 
+            "investigator_location", "history_of_changes"
+        ]
+        
+        # Ensure all required fields are present
+        for field in required_fields:
+            if field not in validated or not validated[field]:
+                validated[field] = "N/A"
+        
+        # Validate Mono/Combo field
+        if "mono_combo" in validated:
+            mono_combo = validated["mono_combo"].lower()
+            if "mono" in mono_combo:
+                validated["mono_combo"] = "Mono"
+            elif "combo" in mono_combo or "combination" in mono_combo:
+                validated["mono_combo"] = "Combo"
+            else:
+                # Default to Mono if unclear
+                validated["mono_combo"] = "Mono"
+        
+        # Validate Line of Therapy field
+        if "line_of_therapy" in validated:
+            lot = validated["line_of_therapy"]
+            valid_lots = ["1L", "2L", "2L+", "Adjuvant", "Neoadjuvant", "Maintenance", "1L-Maintenance", "2L-Maintenance"]
+            
+            # Check if the LOT is already in a valid format
+            if lot not in valid_lots:
+                # Try to standardize common variations
+                lot_lower = lot.lower()
+                if "first" in lot_lower or "1st" in lot_lower or "naive" in lot_lower or "untreated" in lot_lower:
+                    validated["line_of_therapy"] = "1L"
+                elif "second" in lot_lower or "2nd" in lot_lower:
+                    validated["line_of_therapy"] = "2L"
+                elif "third" in lot_lower or "3rd" in lot_lower or "refractory" in lot_lower or "relapsed" in lot_lower:
+                    validated["line_of_therapy"] = "2L+"
+                elif "adjuvant" in lot_lower:
+                    validated["line_of_therapy"] = "Adjuvant"
+                elif "neoadjuvant" in lot_lower:
+                    validated["line_of_therapy"] = "Neoadjuvant"
+                elif "maintenance" in lot_lower:
+                    if "1l" in lot_lower or "first" in lot_lower:
+                        validated["line_of_therapy"] = "1L-Maintenance"
+                    elif "2l" in lot_lower or "second" in lot_lower:
+                        validated["line_of_therapy"] = "2L-Maintenance"
+                    else:
+                        validated["line_of_therapy"] = "Maintenance"
+        
+        # Validate Geography field
+        if "geography" in validated:
+            geo = validated["geography"]
+            valid_geos = ["Global", "International", "China only"]
+            
+            if geo not in valid_geos and "," in geo:
+                # Try to apply classification rules
+                countries = [c.strip() for c in geo.split(",")]
+                us_present = any("united states" in c.lower() or "usa" in c.lower() for c in countries)
+                eu_countries = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "czech republic", 
+                               "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", 
+                               "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", 
+                               "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
+                eu_present = any(any(eu in c.lower() for eu in eu_countries) for c in countries)
+                japan_present = any("japan" in c.lower() for c in countries)
+                china_present = any("china" in c.lower() or "taiwan" in c.lower() for c in countries)
+                
+                if us_present and eu_present and japan_present and china_present:
+                    validated["geography"] = "Global"
+                elif eu_present and len(countries) > 1:
+                    validated["geography"] = "International"
+                elif china_present and len(countries) <= 2 and all("china" in c.lower() or "taiwan" in c.lower() for c in countries):
+                    validated["geography"] = "China only"
+        
+        # Validate Sponsor Type field
+        if "sponsor_type" in validated:
+            sponsor_type = validated["sponsor_type"]
+            valid_types = ["Industry Only", "Academic Only", "Industry-Academic Collaboration"]
+            
+            if sponsor_type not in valid_types:
+                # Default to "Not Determined" if unclear
+                validated["sponsor_type"] = "Not Determined"
+        
+        # Validate date formats
+        date_fields = ["start_date", "primary_completion_date", "study_completion_date"]
+        for date_field in date_fields:
+            if date_field in validated:
+                date_value = validated[date_field]
+                # Check if it's already in YY-MM-DD format
+                if not re.match(r'\d{2}-\d{2}-\d{2}', date_value):
+                    # Try to extract and reformat the date
+                    date_match = re.search(r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', date_value)
+                    if date_match:
+                        month, day, year = date_match.groups()
+                        if len(year) == 4:
+                            year = year[2:4]  # Extract last two digits for YY format
+                        validated[date_field] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        
+        return validated
+        
     def _analyze_trial_legacy(self, nct_id: str, trial_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Legacy analysis method for non-o3 models
+        Legacy analysis method for all models
+        Enhanced to better handle o3 model with more structured prompting
         """
-        # Extract all fields using reasoning models
-        result = {
-            "nct_id": nct_id,
-            "analysis_timestamp": datetime.now().isoformat(),
-            "model_used": self.model,
-            "analysis_method": "legacy"
-        }
-        
-        # Extract basic fields (pass nct_id for fallback)
-        basic_fields = self.extract_basic_fields(trial_data, nct_id=nct_id)
-        result.update(basic_fields)
-        
-        # Extract drug-related fields using reasoning
-        drug_fields = self.analyze_drug_fields_reasoning(trial_data)
-        result.update(drug_fields)
-        
-        # Extract clinical fields using reasoning
-        clinical_fields = self.analyze_clinical_fields_reasoning(trial_data)
-        result.update(clinical_fields)
-        
-        # Extract biomarker fields using reasoning
-        biomarker_fields = self.analyze_biomarker_fields_reasoning(trial_data)
-        result.update(biomarker_fields)
-        
-        return result
+        try:
+            # Extract all fields using reasoning models
+            result = {
+                "nct_id": nct_id,
+                "analysis_timestamp": datetime.now().isoformat(),
+                "model_used": self.model,
+                "analysis_method": "legacy"
+            }
+            
+            # Extract basic fields (pass nct_id for fallback)
+            basic_fields = self.extract_basic_fields(trial_data, nct_id=nct_id)
+            result.update(basic_fields)
+            
+            # For o3 model, use a more structured approach with a single API call
+            if self.model in ["o3"]:
+                try:
+                    # Create a structured prompt with clear instructions
+                    structured_prompt = f"""
+                    Analyze the following clinical trial data and extract key information:
+                    
+                    NCT ID: {nct_id}
+                    
+                    Trial Data:
+                    {json.dumps(trial_data, indent=2)[:10000]}
+                    
+                    Extract the following fields (use 'N/A' if not available):
+                    1. Primary Drug: The main investigational drug being tested
+                    2. Primary Drug MoA: Mechanism of action (e.g., "Anti-PD-1", "PARP inhibitor")
+                    3. Primary Drug Target: Target molecule or pathway
+                    4. Primary Drug Modality: Type of drug (e.g., "Monoclonal antibody", "Small molecule")
+                    5. Indication: Disease or condition being treated
+                    6. Line of Therapy: Treatment line (e.g., "1L", "2L+")
+                    7. Biomarker (Mutations): Any biomarker mutations relevant to the trial
+                    8. Biomarker Stratification: How biomarkers are used for stratification
+                    9. Biomarker (Wildtype): Any wildtype biomarkers relevant to the trial
+                    10. Histology: Tissue type or histological classification
+                    11. Prior Treatment: Required previous treatments
+                    12. Stage of Disease: Disease stage for eligibility
+                    
+                    Return your analysis as a JSON object with these field names.
+                    """
+                    
+                    # Make API call with structured prompt
+                    response = self.openai_client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "You are a clinical trial analysis expert."},
+                            {"role": "user", "content": structured_prompt}
+                        ],
+                        max_completion_tokens=2000,
+                        temperature=0.1,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    # Parse response
+                    content = response.choices[0].message.content.strip()
+                    additional_fields = json.loads(content)
+                    
+                    # Update result with extracted fields
+                    result.update(additional_fields)
+                    
+                except Exception as e:
+                    logger.error(f"Error in o3 structured analysis: {e}")
+                    # Continue with standard field extraction methods
+            
+            # Extract drug-related fields using reasoning
+            drug_fields = self.analyze_drug_fields_reasoning(trial_data)
+            result.update(drug_fields)
+            
+            # Extract clinical fields using reasoning
+            clinical_fields = self.analyze_clinical_fields_reasoning(trial_data)
+            result.update(clinical_fields)
+            
+            # Extract biomarker fields using reasoning
+            biomarker_fields = self.analyze_biomarker_fields_reasoning(trial_data)
+            result.update(biomarker_fields)
+            
+            # Use specialized extractors for complex fields
+            result["Geography"] = self._extract_geography(trial_data)
+            result["Sponsor Type"] = self._extract_sponsor_type(trial_data)
+            result["Developer"] = self._extract_developer(trial_data)
+            result["History of Changes"] = self._extract_history_of_changes(trial_data)
+            
+            # Apply standardization to ensure consistent output
+            result = self._standardize_drug_fields(result)
+            result = self._standardize_clinical_fields(result)
+            result = self._standardize_biomarker_fields(result)
+            
+            # Apply validation rules
+            result = self._validate_analysis_result(result)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in legacy analysis: {e}")
+            return {
+                "error": f"Analysis failed: {str(e)}",
+                "nct_id": nct_id,
+                "analysis_timestamp": datetime.now().isoformat(),
+                "model_used": self.model
+            }
     
     def analyze_query(self, query: str) -> Dict[str, Any]:
         """
@@ -742,17 +1361,31 @@ I have provided you with:
             }
     
     def analyze_multiple_trials(self, nct_ids: List[str], json_file_paths: Optional[List[str]] = None) -> pd.DataFrame:
-        """Analyze multiple clinical trials and return as DataFrame"""
+        """
+        Analyze multiple clinical trials and return as DataFrame
+        
+        Args:
+            nct_ids: List of NCT IDs to analyze
+            json_file_paths: Optional list of paths to JSON files
+            
+        Returns:
+            DataFrame containing analysis results with one or more rows per trial
+        """
         results = []
         
         for i, nct_id in enumerate(nct_ids):
             try:
                 json_file_path = json_file_paths[i] if json_file_paths and i < len(json_file_paths) else None
-                result = self.analyze_trial(nct_id, json_file_path)
-                if "error" not in result:
-                    results.append(result)
-                else:
-                    logger.error(f"Error analyzing {nct_id}: {result['error']}")
+                
+                # Use the multi-row analysis method to get all possible rows
+                trial_results = self.analyze_trial_multi_row(nct_id, json_file_path)
+                
+                # Add all rows to the results list
+                for result in trial_results:
+                    if "error" not in result:
+                        results.append(result)
+                    else:
+                        logger.error(f"Error analyzing {nct_id}: {result['error']}")
             except Exception as e:
                 logger.error(f"Exception analyzing {nct_id}: {e}")
             
@@ -767,6 +1400,749 @@ I have provided you with:
             return pd.DataFrame()
     
     # Helper methods are inherited from BaseAnalyzer
+
+    def _standardize_drug_fields(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Standardize drug-related fields according to specification rules
+        
+        Args:
+            result: Dictionary containing extracted drug fields
+            
+        Returns:
+            Dict containing standardized drug fields
+        """
+        standardized = {}
+        
+        # Standardize Primary Drug
+        if "Primary Drug" in result:
+            drug = result["Primary Drug"]
+            # Remove brand name references
+            drug_patterns = {
+                r'(\w+)\s+\(.*?\)': r'\1',  # Remove parenthetical content
+                r'(.*?)\s+\(.*?known as.*?\)': r'\1',  # Remove "known as" references
+                r'(\w+).*?\((\w+)\)': r'\1',  # Keep first part before parentheses
+            }
+            for pattern, replacement in drug_patterns.items():
+                drug = re.sub(pattern, replacement, drug)
+            standardized["Primary Drug"] = drug.strip()
+        
+        # Standardize Primary Drug MoA
+        if "Primary Drug MoA" in result:
+            moa = result["Primary Drug MoA"]
+            # Apply MoA standardization rules
+            moa_patterns = {
+                r'(?i)PARPi': 'PARP inhibitor',
+                r'(?i)PD-?L?1\s+inhibitor': 'Anti-PD-L1',
+                r'(?i)PD-?1\s+inhibitor': 'Anti-PD-1',
+                r'(?i)nectin-?4\s+directed\s+ADC': 'Anti-Nectin-4',
+                r'(?i)nectin-?4\s+inhibitor': 'Anti-Nectin-4',
+                r'(?i)nectin-?4\s+antibody': 'Anti-Nectin-4',
+                r'(?i)HER2\s+inhibitor': 'Anti-HER2',
+                r'(?i)CTLA-?4\s+inhibitor': 'Anti-CTLA-4',
+            }
+            for pattern, replacement in moa_patterns.items():
+                moa = re.sub(pattern, replacement, moa)
+            standardized["Primary Drug MoA"] = moa
+        
+        # Standardize Primary Drug Modality
+        if "Primary Drug Modality" in result:
+            modality = result["Primary Drug Modality"]
+            # Apply modality standardization rules
+            modality_patterns = {
+                r'(?i)antibody.?drug\s+conjugate': 'ADC',
+                r'(?i)chimeric\s+antigen\s+receptor\s+T\s+cell': 'CAR-T',
+                r'(?i)T-?cell\s+redirecting\s+bispecific': 'T-cell engager',
+            }
+            for pattern, replacement in modality_patterns.items():
+                modality = re.sub(pattern, replacement, modality)
+                
+            # Apply suffix-based rules
+            if re.search(r'(?i)\w+mab\b', result.get("Primary Drug", "")):
+                modality = "Monoclonal antibody"
+            elif re.search(r'(?i)\w+tinib\b', result.get("Primary Drug", "")):
+                modality = "Small molecule"
+                
+            standardized["Primary Drug Modality"] = modality
+        
+        # Standardize Primary Drug ROA
+        if "Primary Drug ROA" in result:
+            roa = result["Primary Drug ROA"]
+            # Apply ROA standardization rules
+            roa_patterns = {
+                r'(?i)intravenous': 'Intravenous (IV)',
+                r'(?i)IV\b': 'Intravenous (IV)',
+                r'(?i)subcutaneous': 'Subcutaneous (SC)',
+                r'(?i)SC\b': 'Subcutaneous (SC)',
+                r'(?i)oral': 'Oral',
+                r'(?i)intratumoral': 'Intratumoral (IT)',
+                r'(?i)IT\b': 'Intratumoral (IT)',
+            }
+            for pattern, replacement in roa_patterns.items():
+                roa = re.sub(pattern, replacement, roa)
+            standardized["Primary Drug ROA"] = roa
+        
+        # Copy other fields as is
+        for key in result:
+            if key not in standardized:
+                standardized[key] = result[key]
+                
+        return standardized
+    
+    def _standardize_clinical_fields(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Standardize clinical fields according to specification rules
+        
+        Args:
+            result: Dictionary containing extracted clinical fields
+            
+        Returns:
+            Dict containing standardized clinical fields
+        """
+        standardized = {}
+        
+        # Standardize Line of Therapy
+        if "Line of Therapy" in result:
+            lot = result["Line of Therapy"]
+            # Apply LOT standardization rules
+            lot_patterns = {
+                r'(?i)first[\s-]?line': '1L',
+                r'(?i)1st[\s-]?line': '1L',
+                r'(?i)treatment[\s-]?na[iï]ve': '1L',
+                r'(?i)previously[\s-]?untreated': '1L',
+                r'(?i)newly[\s-]?diagnosed': '1L',
+                r'(?i)second[\s-]?line': '2L',
+                r'(?i)2nd[\s-]?line': '2L',
+                r'(?i)third[\s-]?line': '2L+',
+                r'(?i)3rd[\s-]?line': '2L+',
+                r'(?i)relapsed.*?refractory': '2L+',
+                r'(?i)refractory': '2L+',
+                r'(?i)relapsed': '2L+',
+                r'(?i)previously[\s-]?treated': '2L+',
+                r'(?i)maintenance': 'Maintenance',
+                r'(?i)adjuvant': 'Adjuvant',
+                r'(?i)neoadjuvant': 'Neoadjuvant',
+            }
+            for pattern, replacement in lot_patterns.items():
+                if re.search(pattern, lot):
+                    lot = replacement
+                    break
+            standardized["Line of Therapy"] = lot
+        
+        # Standardize Stage of Disease
+        if "Stage of Disease" in result:
+            stage = result["Stage of Disease"]
+            # Apply stage standardization rules
+            if re.search(r'(?i)metastatic|stage\s+4|stage\s+IV', stage):
+                standardized["Stage of Disease"] = "Stage 4"
+            elif re.search(r'(?i)locally\s+advanced', stage):
+                standardized["Stage of Disease"] = "Stage 3/4"
+            elif re.search(r'(?i)early[\s-]?stage|stage\s+1|stage\s+I|stage\s+2|stage\s+II', stage):
+                standardized["Stage of Disease"] = "Stage 1/2"
+            else:
+                standardized["Stage of Disease"] = stage
+        
+        # Copy other fields as is
+        for key in result:
+            if key not in standardized:
+                standardized[key] = result[key]
+                
+        return standardized
+    
+    def _standardize_biomarker_fields(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Standardize biomarker fields according to specification rules
+        
+        Args:
+            result: Dictionary containing extracted biomarker fields
+            
+        Returns:
+            Dict containing standardized biomarker fields
+        """
+        standardized = {}
+        
+        # Standardize Biomarker (Mutations)
+        if "Biomarker (Mutations)" in result:
+            biomarkers = result["Biomarker (Mutations)"]
+            # Apply biomarker standardization rules
+            biomarker_patterns = {
+                r'(?i)ErbB2': 'HER2',
+                r'(?i)PDL1': 'PD-L1',
+                r'(?i)PD\s+L1': 'PD-L1',
+                r'(?i)EGFR': 'EGFR',
+                r'(?i)MSI-H\s+and\s+dMMR': 'dMMR/MSI-H',
+                r'(?i)dMMR\s+and\s+MSI-H': 'dMMR/MSI-H',
+                r'(?i)MSI-H/dMMR': 'dMMR/MSI-H',
+                r'(?i)dMMR/MSI-H': 'dMMR/MSI-H',
+            }
+            for pattern, replacement in biomarker_patterns.items():
+                biomarkers = re.sub(pattern, replacement, biomarkers)
+            standardized["Biomarker (Mutations)"] = biomarkers
+        
+        # Copy other fields as is
+        for key in result:
+            if key not in standardized:
+                standardized[key] = result[key]
+                
+        return standardized
+
+    def _should_split_into_multiple_rows(self, trial_data: Dict[str, Any], analysis_result: Dict[str, Any]) -> bool:
+        """
+        Determine if the trial should be split into multiple rows based on specific criteria
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            analysis_result: Dictionary containing analysis results
+            
+        Returns:
+            Boolean indicating whether the trial should be split into multiple rows
+        """
+        # Check for criteria that would require splitting
+        
+        # 1. Based on Combination Partners
+        # If both mono and combo regimens are evaluated in the same trial
+        if "Mono/Combo" in analysis_result:
+            arms = trial_data.get("protocolSection", {}).get("armsInterventionsModule", {}).get("armGroups", [])
+            has_mono = False
+            has_combo = False
+            
+            # Check if there are explicit mono and combo arms
+            for arm in arms:
+                arm_title = arm.get("title", "").lower()
+                arm_desc = arm.get("description", "").lower()
+                
+                if "monotherapy" in arm_title or "monotherapy" in arm_desc or "single agent" in arm_title or "single agent" in arm_desc:
+                    has_mono = True
+                
+                if "combination" in arm_title or "combination" in arm_desc or " + " in arm_title or " plus " in arm_title:
+                    has_combo = True
+            
+            if has_mono and has_combo:
+                return True
+                
+            # Check if multiple combination partners are mentioned
+            if analysis_result.get("Mono/Combo") == "Combo" and "," in analysis_result.get("Combination Partner", ""):
+                return True
+        
+        # 2. Based on Line of Therapy (LOT)
+        # If different LOTs are evaluated within the same trial
+        eligibility = trial_data.get("protocolSection", {}).get("eligibilityModule", {}).get("eligibilityCriteria", "")
+        
+        # Check for multiple LOT mentions
+        lot_patterns = {
+            "1L": r"(?i)treatment[\s-]?na[iï]ve|previously[\s-]?untreated|newly[\s-]?diagnosed|first[\s-]?line",
+            "2L": r"(?i)second[\s-]?line|one\s+prior\s+therapy|1\s+prior\s+therapy",
+            "2L+": r"(?i)third[\s-]?line|multiple\s+prior\s+therapies|refractory|relapsed|previously[\s-]?treated",
+            "Adjuvant": r"(?i)adjuvant|post[\s-]?operative|post[\s-]?surgical",
+            "Neoadjuvant": r"(?i)neoadjuvant|pre[\s-]?operative|pre[\s-]?surgical",
+            "Maintenance": r"(?i)maintenance"
+        }
+        
+        lot_mentions = []
+        for lot, pattern in lot_patterns.items():
+            if re.search(pattern, eligibility):
+                lot_mentions.append(lot)
+        
+        if len(lot_mentions) > 1:
+            return True
+        
+        # 3. Based on Patient Subgroup
+        # If there are different sub-indications or cohorts
+        if "cohort" in eligibility.lower() and ":" in eligibility:
+            return True
+        
+        # 4. Based on ROA (Route of Administration)
+        # If the same drug has been evaluated for different routes of administration
+        interventions = trial_data.get("protocolSection", {}).get("armsInterventionsModule", {}).get("interventions", [])
+        roa_set = set()
+        
+        for intervention in interventions:
+            desc = intervention.get("description", "").lower()
+            
+            if "intravenous" in desc or "iv" in desc.split():
+                roa_set.add("IV")
+            if "subcutaneous" in desc or "sc" in desc.split():
+                roa_set.add("SC")
+            if "oral" in desc:
+                roa_set.add("Oral")
+            if "intratumoral" in desc or "it" in desc.split():
+                roa_set.add("IT")
+        
+        if len(roa_set) > 1:
+            return True
+        
+        return False
+    
+    def _split_into_multiple_rows(self, trial_data: Dict[str, Any], analysis_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Split the trial analysis into multiple rows based on specific criteria
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            analysis_result: Dictionary containing analysis results
+            
+        Returns:
+            List of dictionaries, each representing a row in the analysis
+        """
+        rows = []
+        
+        # 1. Based on Combination Partners
+        if "Mono/Combo" in analysis_result:
+            arms = trial_data.get("protocolSection", {}).get("armsInterventionsModule", {}).get("armGroups", [])
+            has_mono = False
+            has_combo = False
+            combo_partners = []
+            
+            # Check for mono and combo arms
+            for arm in arms:
+                arm_title = arm.get("title", "").lower()
+                arm_desc = arm.get("description", "").lower()
+                
+                if "monotherapy" in arm_title or "monotherapy" in arm_desc or "single agent" in arm_title or "single agent" in arm_desc:
+                    has_mono = True
+                
+                if "combination" in arm_title or "combination" in arm_desc:
+                    has_combo = True
+                    # Extract potential combination partners
+                    if "+" in arm_title:
+                        parts = arm_title.split("+")
+                        if len(parts) > 1:
+                            combo_partners.append(parts[1].strip())
+            
+            # If both mono and combo are present, create separate rows
+            if has_mono and has_combo:
+                # Create mono row
+                mono_row = analysis_result.copy()
+                mono_row["Mono/Combo"] = "Mono"
+                mono_row["Combination Partner"] = "NA"
+                mono_row["MoA of Combination"] = "NA"
+                mono_row["Experimental Regimen"] = mono_row.get("Primary Drug", "")
+                mono_row["MoA of Experimental Regimen"] = mono_row.get("Primary Drug MoA", "")
+                rows.append(mono_row)
+                
+                # Create combo row(s)
+                if combo_partners:
+                    for partner in combo_partners:
+                        combo_row = analysis_result.copy()
+                        combo_row["Mono/Combo"] = "Combo"
+                        combo_row["Combination Partner"] = partner
+                        # For simplicity, we're not determining the MoA of the combination partner here
+                        combo_row["Experimental Regimen"] = f"{combo_row.get('Primary Drug', '')} + {partner}"
+                        rows.append(combo_row)
+                else:
+                    # Generic combo row if we couldn't extract specific partners
+                    combo_row = analysis_result.copy()
+                    combo_row["Mono/Combo"] = "Combo"
+                    rows.append(combo_row)
+                
+                return rows
+            
+            # Check for multiple combination partners
+            if analysis_result.get("Mono/Combo") == "Combo" and "," in analysis_result.get("Combination Partner", ""):
+                partners = [p.strip() for p in analysis_result.get("Combination Partner", "").split(",")]
+                for partner in partners:
+                    combo_row = analysis_result.copy()
+                    combo_row["Combination Partner"] = partner
+                    combo_row["Experimental Regimen"] = f"{combo_row.get('Primary Drug', '')} + {partner}"
+                    rows.append(combo_row)
+                return rows
+        
+        # 2. Based on Line of Therapy (LOT)
+        eligibility = trial_data.get("protocolSection", {}).get("eligibilityModule", {}).get("eligibilityCriteria", "")
+        
+        # Check for multiple LOT mentions
+        lot_patterns = {
+            "1L": r"(?i)treatment[\s-]?na[iï]ve|previously[\s-]?untreated|newly[\s-]?diagnosed|first[\s-]?line",
+            "2L": r"(?i)second[\s-]?line|one\s+prior\s+therapy|1\s+prior\s+therapy",
+            "2L+": r"(?i)third[\s-]?line|multiple\s+prior\s+therapies|refractory|relapsed|previously[\s-]?treated",
+            "Adjuvant": r"(?i)adjuvant|post[\s-]?operative|post[\s-]?surgical",
+            "Neoadjuvant": r"(?i)neoadjuvant|pre[\s-]?operative|pre[\s-]?surgical",
+            "Maintenance": r"(?i)maintenance"
+        }
+        
+        lot_mentions = []
+        for lot, pattern in lot_patterns.items():
+            if re.search(pattern, eligibility):
+                lot_mentions.append(lot)
+        
+        if len(lot_mentions) > 1:
+            for lot in lot_mentions:
+                lot_row = analysis_result.copy()
+                lot_row["Line of Therapy"] = lot
+                rows.append(lot_row)
+            return rows
+        
+        # 3. Based on ROA (Route of Administration)
+        interventions = trial_data.get("protocolSection", {}).get("armsInterventionsModule", {}).get("interventions", [])
+        roa_map = {}
+        
+        for intervention in interventions:
+            desc = intervention.get("description", "").lower()
+            name = intervention.get("name", "")
+            
+            if "intravenous" in desc or "iv" in desc.split():
+                roa_map["Intravenous (IV)"] = name
+            if "subcutaneous" in desc or "sc" in desc.split():
+                roa_map["Subcutaneous (SC)"] = name
+            if "oral" in desc:
+                roa_map["Oral"] = name
+            if "intratumoral" in desc or "it" in desc.split():
+                roa_map["Intratumoral (IT)"] = name
+        
+        if len(roa_map) > 1:
+            for roa, drug in roa_map.items():
+                roa_row = analysis_result.copy()
+                roa_row["Primary Drug ROA"] = roa
+                rows.append(roa_row)
+            return rows
+        
+        # If no splitting criteria matched, return the original row
+        if not rows:
+            rows.append(analysis_result)
+        
+        return rows
+
+    def _extract_geography(self, trial_data: Dict[str, Any]) -> str:
+        """
+        Extract and classify the trial geography based on location countries
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            
+        Returns:
+            String representing the geography classification
+        """
+        # Get location countries
+        locations = trial_data.get("protocolSection", {}).get("contactsLocationsModule", {}).get("locations", [])
+        countries = set()
+        
+        for location in locations:
+            country = location.get("country", "")
+            if country:
+                countries.add(country)
+        
+        # Classify geography according to rules
+        us_present = any(country in ["United States", "USA", "U.S.A."] for country in countries)
+        
+        eu_countries = {
+            "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia", "Czech Republic", 
+            "Denmark", "Estonia", "Finland", "France", "Germany", "Greece", "Hungary", 
+            "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg", "Malta", "Netherlands", 
+            "Poland", "Portugal", "Romania", "Slovakia", "Slovenia", "Spain", "Sweden"
+        }
+        eu_present = any(country in eu_countries for country in countries)
+        
+        japan_present = "Japan" in countries
+        china_present = any(country in ["China", "Taiwan"] for country in countries)
+        
+        # Apply classification rules
+        if us_present and eu_present and japan_present and china_present:
+            return "Global"
+        elif eu_present and (len(countries) > 1):
+            return "International"
+        elif china_present and len(countries) <= 2 and all("china" in c.lower() or "taiwan" in c.lower() for c in countries):
+            return "China only"
+        else:
+            # Default to listing the countries
+            return ", ".join(sorted(countries)) if countries else "Not Available"
+    
+    def _extract_sponsor_type(self, trial_data: Dict[str, Any]) -> str:
+        """
+        Classify the sponsor type based on sponsor and collaborator information
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            
+        Returns:
+            String representing the sponsor type classification
+        """
+        # Get sponsor and collaborator information
+        sponsor_info = trial_data.get("protocolSection", {}).get("identificationModule", {})
+        sponsor = sponsor_info.get("organization", {}).get("fullName", "")
+        collaborators = sponsor_info.get("collaborators", [])
+        collaborator_names = [c.get("name", "") for c in collaborators]
+        
+        # Define patterns for industry vs academic
+        industry_patterns = [
+            r'(?i)pharma', r'(?i)therapeutics', r'(?i)biotech', r'(?i)inc\.?', 
+            r'(?i)corp\.?', r'(?i)ltd\.?', r'(?i)limited', r'(?i)gmbh', 
+            r'(?i)biosciences', r'(?i)medicines', r'(?i)labs'
+        ]
+        
+        academic_patterns = [
+            r'(?i)university', r'(?i)college', r'(?i)institute', r'(?i)hospital', 
+            r'(?i)medical center', r'(?i)clinic', r'(?i)foundation', r'(?i)society', 
+            r'(?i)association', r'(?i)center for', r'(?i)ministry of', r'(?i)department of'
+        ]
+        
+        # Check if sponsor is industry
+        sponsor_is_industry = any(re.search(pattern, sponsor) for pattern in industry_patterns)
+        sponsor_is_academic = any(re.search(pattern, sponsor) for pattern in academic_patterns)
+        
+        # Check if any collaborator is industry
+        collab_is_industry = any(
+            any(re.search(pattern, collab) for pattern in industry_patterns) 
+            for collab in collaborator_names
+        )
+        
+        # Check if any collaborator is academic
+        collab_is_academic = any(
+            any(re.search(pattern, collab) for pattern in academic_patterns) 
+            for collab in collaborator_names
+        )
+        
+        # Apply classification rules
+        if (sponsor_is_industry and not sponsor_is_academic) and (not collab_is_academic):
+            return "Industry Only"
+        elif (sponsor_is_academic and not sponsor_is_industry) and (not collab_is_industry):
+            return "Academic Only"
+        elif (sponsor_is_industry and collab_is_academic) or (sponsor_is_academic and collab_is_industry):
+            return "Industry-Academic Collaboration"
+        else:
+            # Default case
+            if sponsor_is_industry:
+                return "Industry Only"
+            elif sponsor_is_academic:
+                return "Academic Only"
+            else:
+                return "Not Determined"
+    
+    def _extract_developer(self, trial_data: Dict[str, Any]) -> str:
+        """
+        Extract the developer of the primary drug based on sponsor and collaborator information
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            
+        Returns:
+            String representing the developer
+        """
+        # Get sponsor and collaborator information
+        sponsor_info = trial_data.get("protocolSection", {}).get("identificationModule", {})
+        sponsor = sponsor_info.get("organization", {}).get("fullName", "")
+        collaborators = sponsor_info.get("collaborators", [])
+        collaborator_names = [c.get("name", "") for c in collaborators]
+        
+        # Define patterns for pharma companies
+        pharma_patterns = [
+            r'(?i)pharma', r'(?i)therapeutics', r'(?i)biotech', r'(?i)biosciences', 
+            r'(?i)medicines', r'(?i)labs'
+        ]
+        
+        # Check if sponsor is a pharma company
+        sponsor_is_pharma = any(re.search(pattern, sponsor) for pattern in pharma_patterns)
+        
+        # Check if any collaborator is a pharma company
+        collab_is_pharma = any(
+            any(re.search(pattern, collab) for pattern in pharma_patterns) 
+            for collab in collaborator_names
+        )
+        
+        # Apply acquisition mapping
+        acquisition_map = {
+            "Seagen": "Pfizer",
+            "Mirati Therapeutics": "BMS",
+            "BioNTech SE": "BMS",
+            "Fusion Pharma": "AstraZeneca",
+            "Genentech": "Roche"
+        }
+        
+        # Check for acquisitions in sponsor
+        for original, acquired_by in acquisition_map.items():
+            if original.lower() in sponsor.lower():
+                return acquired_by
+        
+        # Check for acquisitions in collaborators
+        for collab in collaborator_names:
+            for original, acquired_by in acquisition_map.items():
+                if original.lower() in collab.lower():
+                    return acquired_by
+        
+        # Return sponsor if it's a pharma company
+        if sponsor_is_pharma:
+            return sponsor
+        
+        # Return first pharma collaborator
+        for collab in collaborator_names:
+            if any(re.search(pattern, collab) for pattern in pharma_patterns):
+                return collab
+        
+        # Default
+        return "Not Determined"
+    
+    def _extract_history_of_changes(self, trial_data: Dict[str, Any]) -> str:
+        """
+        Extract and summarize the history of changes for the trial
+        
+        Args:
+            trial_data: Dictionary containing trial data
+            
+        Returns:
+            String summarizing the history of changes
+        """
+        # Get study history information
+        protocol_section = trial_data.get("protocolSection", {})
+        status_module = trial_data.get("statusModule", {})
+        
+        # Check for status changes
+        status_history = status_module.get("statusVerifiedDate", "")
+        status = status_module.get("overallStatus", "")
+        
+        # Check for date changes
+        start_date = protocol_section.get("datesSection", {}).get("startDate", "")
+        completion_date = protocol_section.get("datesSection", {}).get("primaryCompletionDate", "")
+        
+        # Look for changes in study design
+        design_changes = []
+        
+        # Check for changes in eligibility criteria
+        eligibility = protocol_section.get("eligibilityModule", {}).get("eligibilityCriteria", "")
+        if "amended" in eligibility.lower() or "revised" in eligibility.lower() or "modified" in eligibility.lower():
+            design_changes.append("Eligibility criteria modified")
+        
+        # Check for changes in outcome measures
+        outcomes = protocol_section.get("outcomesModule", {})
+        if outcomes:
+            primary_outcomes = outcomes.get("primaryOutcomes", [])
+            for outcome in primary_outcomes:
+                if "changed" in outcome.get("description", "").lower() or "modified" in outcome.get("description", "").lower():
+                    design_changes.append("Primary outcome measures modified")
+                    break
+        
+        # Compile the history of changes
+        changes = []
+        if status_history:
+            changes.append(f"Status verified on {status_history} as '{status}'")
+        
+        if start_date:
+            changes.append(f"Study start date: {start_date}")
+        
+        if completion_date:
+            changes.append(f"Primary completion date: {completion_date}")
+        
+        changes.extend(design_changes)
+        
+        return "; ".join(changes) if changes else "No significant changes documented"
+
+    def _validate_analysis_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate the analysis result against expected formats and rules
+        
+        Args:
+            result: Dictionary containing analysis results
+            
+        Returns:
+            Dictionary with validated and corrected fields
+        """
+        validated = result.copy()
+        
+        # Required fields from the specification
+        required_fields = [
+            "nct_id", "trial_id", "trial_name", "trial_phase", "trial_status", 
+            "primary_drug", "primary_drug_moa", "primary_drug_target", "primary_drug_modality", 
+            "indication", "primary_drug_roa", "mono_combo", "combination_partner", 
+            "moa_of_combination", "experimental_regimen", "moa_of_experimental_regimen", 
+            "line_of_therapy", "biomarker_mutations", "biomarker_stratification", 
+            "biomarker_wildtype", "histology", "prior_treatment", "stage_of_disease", 
+            "patient_enrollment", "sponsor_type", "sponsor", "collaborator", "developer", 
+            "start_date", "primary_completion_date", "study_completion_date", 
+            "primary_endpoints", "secondary_endpoints", "patient_population", 
+            "inclusion_criteria", "exclusion_criteria", "trial_countries", "geography", 
+            "investigator_name", "investigator_designation", "investigator_qualification", 
+            "investigator_location", "history_of_changes"
+        ]
+        
+        # Ensure all required fields are present
+        for field in required_fields:
+            if field not in validated or not validated[field]:
+                validated[field] = "N/A"
+        
+        # Validate Mono/Combo field
+        if "mono_combo" in validated:
+            mono_combo = validated["mono_combo"].lower()
+            if "mono" in mono_combo:
+                validated["mono_combo"] = "Mono"
+            elif "combo" in mono_combo or "combination" in mono_combo:
+                validated["mono_combo"] = "Combo"
+            else:
+                # Default to Mono if unclear
+                validated["mono_combo"] = "Mono"
+        
+        # Validate Line of Therapy field
+        if "line_of_therapy" in validated:
+            lot = validated["line_of_therapy"]
+            valid_lots = ["1L", "2L", "2L+", "Adjuvant", "Neoadjuvant", "Maintenance", "1L-Maintenance", "2L-Maintenance"]
+            
+            # Check if the LOT is already in a valid format
+            if lot not in valid_lots:
+                # Try to standardize common variations
+                lot_lower = lot.lower()
+                if "first" in lot_lower or "1st" in lot_lower or "naive" in lot_lower or "untreated" in lot_lower:
+                    validated["line_of_therapy"] = "1L"
+                elif "second" in lot_lower or "2nd" in lot_lower:
+                    validated["line_of_therapy"] = "2L"
+                elif "third" in lot_lower or "3rd" in lot_lower or "refractory" in lot_lower or "relapsed" in lot_lower:
+                    validated["line_of_therapy"] = "2L+"
+                elif "adjuvant" in lot_lower:
+                    validated["line_of_therapy"] = "Adjuvant"
+                elif "neoadjuvant" in lot_lower:
+                    validated["line_of_therapy"] = "Neoadjuvant"
+                elif "maintenance" in lot_lower:
+                    if "1l" in lot_lower or "first" in lot_lower:
+                        validated["line_of_therapy"] = "1L-Maintenance"
+                    elif "2l" in lot_lower or "second" in lot_lower:
+                        validated["line_of_therapy"] = "2L-Maintenance"
+                    else:
+                        validated["line_of_therapy"] = "Maintenance"
+        
+        # Validate Geography field
+        if "geography" in validated:
+            geo = validated["geography"]
+            valid_geos = ["Global", "International", "China only"]
+            
+            if geo not in valid_geos and "," in geo:
+                # Try to apply classification rules
+                countries = [c.strip() for c in geo.split(",")]
+                us_present = any("united states" in c.lower() or "usa" in c.lower() for c in countries)
+                eu_countries = ["austria", "belgium", "bulgaria", "croatia", "cyprus", "czechia", "czech republic", 
+                               "denmark", "estonia", "finland", "france", "germany", "greece", "hungary", 
+                               "ireland", "italy", "latvia", "lithuania", "luxembourg", "malta", "netherlands", 
+                               "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden"]
+                eu_present = any(any(eu in c.lower() for eu in eu_countries) for c in countries)
+                japan_present = any("japan" in c.lower() for c in countries)
+                china_present = any("china" in c.lower() or "taiwan" in c.lower() for c in countries)
+                
+                if us_present and eu_present and japan_present and china_present:
+                    validated["geography"] = "Global"
+                elif eu_present and len(countries) > 1:
+                    validated["geography"] = "International"
+                elif china_present and len(countries) <= 2 and all("china" in c.lower() or "taiwan" in c.lower() for c in countries):
+                    validated["geography"] = "China only"
+        
+        # Validate Sponsor Type field
+        if "sponsor_type" in validated:
+            sponsor_type = validated["sponsor_type"]
+            valid_types = ["Industry Only", "Academic Only", "Industry-Academic Collaboration"]
+            
+            if sponsor_type not in valid_types:
+                # Default to "Not Determined" if unclear
+                validated["sponsor_type"] = "Not Determined"
+        
+        # Validate date formats
+        date_fields = ["start_date", "primary_completion_date", "study_completion_date"]
+        for date_field in date_fields:
+            if date_field in validated:
+                date_value = validated[date_field]
+                # Check if it's already in YY-MM-DD format
+                if not re.match(r'\d{2}-\d{2}-\d{2}', date_value):
+                    # Try to extract and reformat the date
+                    date_match = re.search(r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', date_value)
+                    if date_match:
+                        month, day, year = date_match.groups()
+                        if len(year) == 4:
+                            year = year[2:4]  # Extract last two digits for YY format
+                        validated[date_field] = f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        
+        return validated
 
 def main():
     """Main function to test the reasoning analyzer"""

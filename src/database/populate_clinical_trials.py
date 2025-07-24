@@ -18,11 +18,8 @@ if database_path not in sys.path:
     sys.path.append(database_path)
 from clinical_trial_database import ClinicalTrialDatabase
 
-# Import analyzer using dynamic path resolution
-analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-if analysis_path not in sys.path:
-    sys.path.append(analysis_path)
-from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+# Import analyzer using absolute import
+from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
 
 # Load environment variables
 load_dotenv()
