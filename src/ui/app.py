@@ -675,11 +675,11 @@ def main():
         if st.button("📊 Run Model Comparison", type="primary"):
             if not nct_id_compare:
                 st.error("❌ Please enter an NCT ID!")
-            elif not compare_models:
+            elif not selected_models or len(selected_models) < 2:
                 st.error("❌ Please select at least 2 models!")
             else:
-                st.info(f"📊 Comparing {len(compare_models)} models on {nct_id_compare}...")
-                run_model_comparison(nct_id_compare, compare_models)
+                st.info(f"📊 Comparing {len(selected_models)} models on {nct_id_compare}...")
+                run_model_comparison(nct_id_compare, selected_models)
     
     with tab3:
         st.header("🤖 MCP Chat Assistant")

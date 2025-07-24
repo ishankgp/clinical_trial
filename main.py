@@ -49,7 +49,7 @@ def main():
         import subprocess
         subprocess.run([sys.executable, "-m", "pytest", "tests/"])
     elif command == "test-reasoning":
-        from test_reasoning_models import test_reasoning_models
+        from tests.test_reasoning_models import test_reasoning_models
         test_reasoning_models()
     elif command == "test-mcp-query":
         import asyncio
