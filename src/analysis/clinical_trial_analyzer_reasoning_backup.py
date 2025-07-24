@@ -400,44 +400,30 @@ Return a JSON object with the following structure:
             logger.error(f"API call error: {e}")
             raise
 
-    def _parse_json_response(self, content: Union[str, List, Dict]) -> Dict[str, Any]:
+    def _parse_json_response(self, content: str) -> Dict[str, Any]:
         """
         Parse JSON response from API call
         
         Args:
-            content: String, List, or Dict containing JSON response
+            content: String containing JSON response
             
         Returns:
             Dictionary parsed from JSON response
         """
         try:
-            # If content is already a dictionary, return it
-            if isinstance(content, dict):
-                return content
-                
-            # If content is a list, convert to string first
-            if isinstance(content, list):
-                content = json.dumps(content)
-                
-            # Parse string content
-            if isinstance(content, str):
-                return json.loads(content)
-            
-            # Fallback for unknown types
-            return {"error": f"Unknown content type: {type(content)}"}
-            
+            return json.loads(content)
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing error: {e}")
             logger.error(f"Response content: {content}")
             # Try to extract JSON using regex for older models
-            if isinstance(content, str):
-                json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                if json_match:
-                    try:
-                        return json.loads(json_match.group())
-                    except json.JSONDecodeError:
-                        raise ValueError(f"Invalid JSON response: {e}")
-            raise ValueError(f"Invalid JSON response: {e}")
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                try:
+                    return json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    raise ValueError(f"Invalid JSON response: {e}")
+            else:
+                raise ValueError(f"Invalid JSON response: {e}")
     
     def analyze_drug_fields_reasoning(self, trial_data: Dict[str, Any]) -> Union[Dict[str, Any], DrugFields]:
         """
@@ -659,7 +645,7 @@ Return a JSON object with the following structure:
                 moa_of_experimental_regimen="Error in analysis"
             )
     
-    def analyze_clinical_fields_reasoning(self, trial_data: Dict[str, Any]) -> Union[Dict[str, Any], ClinicalFields]:
+        def analyze_clinical_fields_reasoning(self, trial_data: Dict[str, Any]) -> Union[Dict[str, Any], ClinicalFields]:
         """
         Analyze clinical fields using reasoning model with structured prompts
         
@@ -830,7 +816,7 @@ Return a JSON object with the following structure:
                 trial_name="Error in analysis"
             )
     
-    def analyze_biomarker_fields_reasoning(self, trial_data: Dict[str, Any]) -> Union[Dict[str, Any], BiomarkerFields]:
+        def analyze_biomarker_fields_reasoning(self, trial_data: Dict[str, Any]) -> Union[Dict[str, Any], BiomarkerFields]:
         """
         Analyze biomarker fields using reasoning model with structured prompts
         

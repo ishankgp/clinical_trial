@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Test script to verify reasoning models (o3, o3-mini) are working correctly
+Test script to verify reasoning models (o3, gpt-4o) are working correctly
 """
 
 import os
 import sys
 from pathlib import Path
 
-# Add the repository root src directory to the import path
-src_dir = Path(__file__).resolve().parents[1] / "src"
-sys.path.insert(0, str(src_dir))
+# Add the repository root directory to the import path
+project_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project_root))
 
-from analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
 
 
 def test_reasoning_models():
@@ -26,40 +26,30 @@ def test_reasoning_models():
     print("🧪 Testing Reasoning Models")
     print("=" * 50)
 
-    # Test o3-mini model
-    print("\n1. Testing o3-mini model...")
+    # Test o3 model (default)
+    print("\n1. Testing o3 model (default)...")
     try:
-        analyzer_mini = ClinicalTrialAnalyzerReasoning(api_key, model="o3-mini")
-        print("✅ o3-mini model initialized successfully")
-
-        # Test query analysis
-        test_query = "Find Phase 3 trials for bladder cancer with checkpoint inhibitors"
-        result = analyzer_mini.analyze_query(test_query)
-        print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
-        assert 'filters' in result
-
-    except Exception as e:
-        print(f"❌ o3-mini test failed: {e}")
-        assert False, f"o3-mini test failed: {e}"
-
-    # Test o3 model
-    print("\n2. Testing o3 model...")
-    try:
-        analyzer_o3 = ClinicalTrialAnalyzerReasoning(api_key, model="o3")
+        analyzer_o3 = ClinicalTrialAnalyzerReasoning(api_key)  # o3 is now the default
         print("✅ o3 model initialized successfully")
 
-        # Test query analysis
-        test_query = "Compare trials using different ADC modalities for solid tumors"
+        # Test query analysis with Pydantic model return
+        test_query = "Find Phase 3 trials for bladder cancer with checkpoint inhibitors"
         result = analyzer_o3.analyze_query(test_query)
-        print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
-        assert 'filters' in result
+        print(f"✅ Query analysis successful: {result.query_intent}")
+        
+        # Test Pydantic model properties
+        assert hasattr(result, 'filters')
+        assert hasattr(result, 'query_intent')
+        assert hasattr(result, 'search_strategy')
+        assert hasattr(result, 'relevant_fields')
+        print("✅ Pydantic model validation passed")
 
     except Exception as e:
         print(f"❌ o3 test failed: {e}")
         assert False, f"o3 test failed: {e}"
 
     # Test fallback to non-reasoning model
-    print("\n3. Testing fallback to gpt-4o...")
+    print("\n2. Testing fallback to gpt-4o...")
     try:
         analyzer_fallback = ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4o")
         print("✅ gpt-4o fallback initialized successfully")
@@ -67,8 +57,8 @@ def test_reasoning_models():
         # Test query analysis
         test_query = "Find diabetes trials with semaglutide"
         result = analyzer_fallback.analyze_query(test_query)
-        print(f"✅ Query analysis successful: {result.get('query_intent', 'N/A')}")
-        assert 'filters' in result
+        print(f"✅ Query analysis successful: {result.query_intent}")
+        assert hasattr(result, 'filters')
 
     except Exception as e:
         print(f"❌ gpt-4o fallback test failed: {e}")
@@ -77,9 +67,11 @@ def test_reasoning_models():
     print("\n" + "=" * 50)
     print("🎉 All reasoning model tests passed!")
     print("\nReasoning models available:")
-    print("- o3: Most powerful reasoning model")
-    print("- o3-mini: Fast reasoning model (default)")
+    print("- o3: Most powerful reasoning model (default)")
     print("- gpt-4o: Fallback non-reasoning model")
+    print("\nNew features tested:")
+    print("- Pydantic models for structured output")
+    print("- Responses API with high-effort reasoning")
 
 
 if __name__ == "__main__":
