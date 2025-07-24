@@ -31,7 +31,7 @@ pip install mcp
 Ensure these files exist:
 ```
 src/mcp/
-├── clinical_trial_mcp_server_fixed.py  # ✅ Required
+├── clinical_trial_mcp_server.py  # ✅ Required
 ├── clinical_trial_chat_mcp.py          # ✅ Required
 └── __init__.py                         # ✅ Required
 ```
@@ -61,7 +61,7 @@ python -c "import mcp; print('✅ MCP available')"
 ```bash
 # In a separate terminal
 cd src/mcp
-python clinical_trial_mcp_server_fixed.py
+python clinical_trial_mcp_server.py
 ```
 
 #### **B. Check Server Logs**
@@ -102,7 +102,7 @@ clinical_trial/
 ├── src/
 │   ├── mcp/
 │   │   ├── __init__.py
-│   │   ├── clinical_trial_mcp_server_fixed.py
+│   │   ├── clinical_trial_mcp_server.py
 │   │   └── clinical_trial_chat_mcp.py
 │   ├── utils/
 │   │   ├── __init__.py
@@ -129,7 +129,7 @@ clinical_trial/
    ```bash
    ls src/mcp/
    # Should show:
-   # clinical_trial_mcp_server_fixed.py
+   # clinical_trial_mcp_server.py
    # clinical_trial_chat_mcp.py
    # __init__.py
    ```
@@ -139,7 +139,7 @@ clinical_trial/
 1. **Start MCP Server**
    ```bash
    cd src/mcp
-   python clinical_trial_mcp_server_fixed.py
+   python clinical_trial_mcp_server.py
    ```
 
 2. **Check Server Output**
@@ -192,7 +192,7 @@ clinical_trial/
 
 **Enable Debug Logging:**
 ```python
-# In clinical_trial_mcp_server_fixed.py
+# In clinical_trial_mcp_server.py
 logging.basicConfig(level=logging.DEBUG)
 ```
 
