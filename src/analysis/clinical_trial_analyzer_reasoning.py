@@ -741,6 +741,56 @@ I have provided you with:
 
 {json.dumps(required_fields, indent=2)}
 
+- Example Output:
+{{
+  "nct_id": "NCT12345678",
+  "trial_id": "12345",
+  "trial_name": "Study of Drug X",
+  "trial_phase": "Phase 3",
+  "trial_status": "Recruiting",
+  "primary_drug": "Drug X",
+  "primary_drug_moa": "Anti-PD-1",
+  "primary_drug_target": "PD-1",
+  "primary_drug_modality": "Monoclonal antibody",
+  "indication": "Cancer",
+  "primary_drug_roa": "Intravenous",
+  "mono_combo": "Mono",
+  "combination_partner": "N/A",
+  "moa_of_combination": "N/A",
+  "experimental_regimen": "Drug X",
+  "moa_of_experimental_regimen": "Anti-PD-1",
+  "line_of_therapy": "1L",
+  "biomarker_mutations": "N/A",
+  "biomarker_stratification": "N/A",
+  "biomarker_wildtype": "N/A",
+  "histology": "N/A",
+  "prior_treatment": "N/A",
+  "stage_of_disease": "Stage 3",
+  "patient_enrollment": "100",
+  "sponsor_type": "Industry",
+  "sponsor": "Pharma Co",
+  "collaborator": "N/A",
+  "developer": "Pharma Co",
+  "start_date": "2023-01-01",
+  "primary_completion_date": "2024-01-01",
+  "study_completion_date": "2025-01-01",
+  "primary_endpoints": "Efficacy",
+  "secondary_endpoints": "Safety",
+  "patient_population": "Adults",
+  "inclusion_criteria": "Criteria",
+  "exclusion_criteria": "Criteria",
+  "trial_countries": "USA",
+  "geography": "Global",
+  "investigator_name": "Dr. Smith",
+  "investigator_designation": "Principal Investigator",
+  "investigator_qualification": "MD",
+  "investigator_location": "Hospital",
+  "history_of_changes": "None",
+  "analysis_timestamp": "2023-07-24T11:50:00",
+  "model_used": "o3",
+  "analysis_method": "dual_document_attachment"
+}}
+
 - Follow the standardization and extraction rules in the attached document for each field.
 - If a field is not present in the input, still include it in the output as 'N/A'.
 - Return only a single JSON object with all fields populated.
