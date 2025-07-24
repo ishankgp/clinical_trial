@@ -22,6 +22,10 @@ from mcp.clinical_trial_mcp_server import ClinicalTrialMCPServer
 from analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
 
 
+import pytest
+
+
+@pytest.mark.asyncio
 async def test_enhanced_query_processing():
     """Test the enhanced LLM-based query processing"""
 
@@ -226,6 +230,7 @@ async def test_enhanced_query_processing():
         return False
 
 
+@pytest.mark.asyncio
 async def test_fallback_processing():
     """Test the enhanced fallback processing when LLM is not available"""
 
