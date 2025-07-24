@@ -171,44 +171,222 @@ def display_analysis_results(result, model_name, analysis_time):
         st.warning("No valid analysis results to display.")
 
 def create_comparison_table(comparison_results):
-    """Create a comparison table for multiple models"""
-    st.subheader("📊 Model Comparison")
+    """Create a comprehensive comparison table with all fields as columns and models as rows"""
+    st.subheader("📊 Comprehensive Model Comparison")
     
     # Prepare data for comparison
     comparison_data = []
+    all_fields = set()
+    
+    # First pass: collect all unique fields
+    for result in comparison_results:
+        if result["success"]:
+            all_fields.update(result["result"].keys())
+    
+    # Sort fields for consistent display
+    field_order = [
+        # Core identification
+        "nct_id", "trial_id", "trial_name", "trial_phase", "trial_status",
+        # Drug information
+        "primary_drug", "primary_drug_moa", "primary_drug_target", "primary_drug_modality",
+        "indication", "primary_drug_roa", "mono_combo", "combination_partner",
+        "moa_of_combination", "experimental_regimen", "moa_of_experimental_regimen",
+        # Clinical information
+        "line_of_therapy", "biomarker_mutations", "biomarker_stratification", "biomarker_wildtype",
+        "histology", "prior_treatment", "stage_of_disease", "patient_enrollment",
+        # Sponsor information
+        "sponsor_type", "sponsor", "collaborator", "developer",
+        # Dates
+        "start_date", "primary_completion_date", "study_completion_date",
+        # Endpoints and criteria
+        "primary_endpoints", "secondary_endpoints", "patient_population",
+        "inclusion_criteria", "exclusion_criteria",
+        # Location and investigators
+        "trial_countries", "geography", "investigator_name", "investigator_designation",
+        "investigator_qualification", "investigator_location",
+        # Metadata
+        "history_of_changes", "analysis_timestamp", "model_used", "analysis_method"
+    ]
+    
+    # Add any remaining fields not in the predefined order
+    for field in sorted(all_fields):
+        if field not in field_order:
+            field_order.append(field)
+    
+    # Second pass: create comparison data
     for result in comparison_results:
         if result["success"]:
             model = result["model"]
             time_taken = result["time"]
-            total_fields = len(result["result"])
-            valid_fields = sum(1 for v in result["result"].values() if v and v != "NA" and v != "Error in analysis")
             
-            comparison_data.append({
+            # Create row data with all fields
+            row_data = {
                 "Model": model,
-                "Analysis Time": f"{time_taken:.2f}s",
-                "Total Fields": total_fields,
-                "Valid Fields": valid_fields,
-                "Success Rate": f"{(valid_fields/total_fields*100):.1f}%" if total_fields > 0 else "0%"
-            })
+                "Analysis Time (s)": f"{time_taken:.2f}",
+                "Analysis Method": result["result"].get("analysis_method", "N/A")
+            }
+            
+            # Add all fields
+            for field in field_order:
+                if field in result["result"]:
+                    value = result["result"][field]
+                    # Truncate long values for display
+                    if isinstance(value, str) and len(value) > 50:
+                        display_value = value[:47] + "..."
+                    else:
+                        display_value = value
+                    row_data[field] = display_value
+                else:
+                    row_data[field] = "N/A"
+            
+            comparison_data.append(row_data)
     
     if comparison_data:
+        # Create DataFrame
         df_comparison = pd.DataFrame(comparison_data)
-        st.dataframe(df_comparison, use_container_width=True)
         
-        # Create a bar chart for comparison
-        fig = px.bar(df_comparison, x="Model", y="Valid Fields", 
-                    title="Valid Fields by Model",
-                    color="Model")
-        st.plotly_chart(fig, use_container_width=True)
+        # Display summary metrics
+        st.write("**📈 Summary Metrics:**")
+        col1, col2, col3, col4 = st.columns(4)
         
-        # Download comparison
-        csv_data = df_comparison.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Comparison (CSV)",
-            data=csv_data,
-            file_name=f"model_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
+        with col1:
+            total_models = len(comparison_data)
+            st.metric("Models Compared", total_models)
+        
+        with col2:
+            total_fields = len(field_order)
+            st.metric("Total Fields", total_fields)
+        
+        with col3:
+            avg_time = sum(float(row["Analysis Time (s)"]) for row in comparison_data) / total_models
+            st.metric("Avg Analysis Time", f"{avg_time:.2f}s")
+        
+        with col4:
+            # Calculate success rate (non-NA fields)
+            total_valid = 0
+            total_possible = 0
+            for row in comparison_data:
+                for field in field_order:
+                    if field in row and row[field] not in ["N/A", "Error in analysis", ""]:
+                        total_valid += 1
+                    total_possible += 1
+            success_rate = (total_valid / total_possible * 100) if total_possible > 0 else 0
+            st.metric("Overall Success Rate", f"{success_rate:.1f}%")
+        
+        # Display the comprehensive comparison table
+        st.write("**📋 Detailed Field Comparison:**")
+        
+        # Add search/filter functionality
+        search_term = st.text_input("🔍 Search fields or values:", placeholder="Type to filter...")
+        
+        if search_term:
+            # Filter columns that contain the search term
+            filtered_columns = ["Model", "Analysis Time (s)", "Analysis Method"]
+            for col in df_comparison.columns:
+                if col in filtered_columns or search_term.lower() in col.lower():
+                    filtered_columns.append(col)
+                else:
+                    # Check if any value in the column contains the search term
+                    for value in df_comparison[col].astype(str):
+                        if search_term.lower() in value.lower():
+                            filtered_columns.append(col)
+                            break
+            
+            df_filtered = df_comparison[filtered_columns]
+        else:
+            df_filtered = df_comparison
+        
+        # Display the table with horizontal scrolling
+        st.dataframe(
+            df_filtered,
+            use_container_width=True,
+            height=400
         )
+        
+        # Create visualizations
+        st.write("**📊 Visual Comparison:**")
+        
+        # 1. Analysis Time Comparison
+        fig_time = px.bar(
+            df_comparison, 
+            x="Model", 
+            y="Analysis Time (s)",
+            title="Analysis Time by Model",
+            color="Model"
+        )
+        st.plotly_chart(fig_time, use_container_width=True)
+        
+        # 2. Field Completion Heatmap
+        st.write("**Field Completion Heatmap:**")
+        heatmap_data = []
+        for _, row in df_comparison.iterrows():
+            model = row["Model"]
+            for field in field_order:
+                if field in row:
+                    value = row[field]
+                    is_complete = value not in ["N/A", "Error in analysis", ""] and value is not None
+                    heatmap_data.append({
+                        "Model": model,
+                        "Field": field,
+                        "Complete": 1 if is_complete else 0
+                    })
+        
+        if heatmap_data:
+            df_heatmap = pd.DataFrame(heatmap_data)
+            fig_heatmap = px.imshow(
+                df_heatmap.pivot(index="Model", columns="Field", values="Complete"),
+                title="Field Completion by Model (1=Complete, 0=Incomplete)",
+                color_continuous_scale="RdYlGn",
+                aspect="auto"
+            )
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+        
+        # Download options
+        st.write("**📥 Download Options:**")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Download comprehensive comparison
+            csv_data = df_comparison.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Full Comparison (CSV)",
+                data=csv_data,
+                file_name=f"comprehensive_model_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+        
+        with col2:
+            # Download filtered comparison
+            if search_term:
+                csv_filtered = df_filtered.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Filtered Comparison (CSV)",
+                    data=csv_filtered,
+                    file_name=f"filtered_model_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+        
+        # Field-by-field comparison
+        st.write("**🔍 Field-by-Field Comparison:**")
+        selected_field = st.selectbox(
+            "Select a field to compare across models:",
+            field_order,
+            index=0
+        )
+        
+        if selected_field in df_comparison.columns:
+            field_comparison = df_comparison[["Model", selected_field]]
+            st.dataframe(field_comparison, use_container_width=True)
+            
+            # Show differences
+            values = field_comparison[selected_field].tolist()
+            unique_values = set(values)
+            if len(unique_values) > 1:
+                st.write(f"**📊 {selected_field} - Model Differences:**")
+                for value in unique_values:
+                    models_with_value = field_comparison[field_comparison[selected_field] == value]["Model"].tolist()
+                    st.write(f"• **{value}**: {', '.join(models_with_value)}")
+        
     else:
         st.error("No successful analyses to compare.")
 
@@ -446,6 +624,17 @@ def main():
     with tab2:
         st.header("📊 Model Comparison")
         st.info("Compare different AI models on the same clinical trial data")
+        
+        # Enhanced comparison features info
+        st.success("🎯 **Enhanced Comparison Features:**")
+        st.write("""
+        • **📋 All Fields as Columns**: See every extracted field across all models
+        • **🔍 Search & Filter**: Find specific fields or values quickly
+        • **📊 Visual Heatmaps**: Field completion visualization
+        • **📈 Summary Metrics**: Performance comparison at a glance
+        • **🔍 Field-by-Field Analysis**: Detailed comparison of specific fields
+        • **📥 Multiple Download Options**: Full or filtered data export
+        """)
         
         # Model comparison interface
         col1, col2 = st.columns(2)

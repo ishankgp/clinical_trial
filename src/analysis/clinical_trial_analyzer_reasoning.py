@@ -718,9 +718,15 @@ Return a JSON object with the following structure:
     def _analyze_trial_with_document_attachment(self, nct_id: str, trial_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze clinical trial using o3 model with both clinical trial data and specification document as attachments
+        Maximized for field extraction: all required fields are listed and must be included in output.
         """
         try:
-            # Create the analysis prompt
+            # List of all required fields (from your CSV header, deduplicated and cleaned for JSON keys)
+            required_fields = [
+                "nct_id", "trial_id", "trial_name", "trial_phase", "trial_status", "primary_drug", "primary_drug_moa", "primary_drug_target", "primary_drug_modality", "indication", "primary_drug_roa", "mono_combo", "combination_partner", "moa_of_combination", "experimental_regimen", "moa_of_experimental_regimen", "line_of_therapy", "biomarker_mutations", "biomarker_stratification", "biomarker_wildtype", "histology", "prior_treatment", "stage_of_disease", "patient_enrollment", "sponsor_type", "sponsor", "collaborator", "developer", "start_date", "primary_completion_date", "study_completion_date", "primary_endpoints", "secondary_endpoints", "patient_population", "inclusion_criteria", "exclusion_criteria", "trial_countries", "geography", "investigator_name", "investigator_designation", "investigator_qualification", "investigator_location", "history_of_changes", "analysis_timestamp", "model_used", "analysis_method"
+            ]
+
+            # Create the analysis prompt with explicit field list and strict instructions
             analysis_prompt = f"""
 Please analyze the clinical trial data provided in the attached files according to the detailed specifications.
 
@@ -728,22 +734,16 @@ I have provided you with:
 1. The complete clinical trial data for NCT ID: {nct_id}
 2. The detailed clinical trial analysis specification document
 
-Please extract all the required fields according to the detailed specifications in the attached document. Return your analysis as a JSON object with the exact field names and structure specified in the document.
+**IMPORTANT:**
+- Extract and return a JSON object with **ALL** of the following fields (even if the value is missing or not found, use null or 'N/A').
+- Do **not** omit any field. If a field is not available, set its value to 'N/A'.
+- Use the exact field names below as JSON keys:
 
-Focus on:
-1. Primary drug identification and standardization
-2. Mechanism of action classification
-3. Drug modality determination
-4. Indication analysis and grouping
-5. Route of administration
-6. Mono/Combo classification
-7. Line of therapy determination
-8. Biomarker extraction and standardization
-9. Sponsor type classification
-10. Geography classification
-11. All other specified fields
+{json.dumps(required_fields, indent=2)}
 
-Ensure all extracted data follows the standardization rules and format requirements specified in the attached document.
+- Follow the standardization and extraction rules in the attached document for each field.
+- If a field is not present in the input, still include it in the output as 'N/A'.
+- Return only a single JSON object with all fields populated.
 """
             
             # Prepare the specification document attachment
@@ -807,6 +807,11 @@ Ensure all extracted data follows the standardization rules and format requireme
             # Parse the response
             content = response.choices[0].message.content.strip()
             result = json.loads(content)
+            
+            # Post-process: Ensure all required fields are present
+            for field in required_fields:
+                if field not in result or result[field] in [None, "", "null"]:
+                    result[field] = "N/A"
             
             # Add metadata
             result.update({
