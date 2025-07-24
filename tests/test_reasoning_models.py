@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-# Add the project src directory to the import path
+# Add the repository root src directory to the import path
 src_dir = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(src_dir))
 
