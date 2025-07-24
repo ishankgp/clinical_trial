@@ -103,7 +103,8 @@ def check_api_key():
 def analyze_trial_with_model(model_name, nct_id, json_file_path, api_key):
     """Analyze a trial with a specific model"""
     try:
-        if model_name in ["gpt-4o", "gpt-4o-mini", "o4-mini"]:
+        reasoning_models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini"]
+        if model_name in reasoning_models:
             analyzer = ClinicalTrialAnalyzerReasoning(api_key, model=model_name)
         else:
             analyzer = ClinicalTrialAnalyzerLLM(api_key)
