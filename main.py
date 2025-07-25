@@ -66,4 +66,4 @@ def main():
         print("Available commands: setup, ui, process, populate, test, test-reasoning, test-mcp-query, test-mcp-chat, test-o3-doc")
 
 if __name__ == "__main__":
-    main() 
+    main()
