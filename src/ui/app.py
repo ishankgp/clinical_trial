@@ -117,6 +117,18 @@ def analyze_trial_with_model(model_name, nct_id, json_file_path, api_key):
             "model": model_name
         }
 
+def get_dict_from_pydantic(obj):
+    """Convert a Pydantic model to a dictionary, handling both v1 and v2 versions"""
+    if hasattr(obj, "model_dump"):
+        # Pydantic v2
+        return obj.model_dump()
+    elif hasattr(obj, "dict"):
+        # Pydantic v1
+        return obj.dict()
+    else:
+        # Not a Pydantic model
+        return obj
+
 def display_analysis_results(result, model_name, analysis_time):
     """Display analysis results in a formatted way"""
     st.subheader(f"📊 Analysis Results - {model_name}")
@@ -129,10 +141,14 @@ def display_analysis_results(result, model_name, analysis_time):
     with col2:
         st.metric("Analysis Time", f"{analysis_time:.2f}s")
     with col3:
-        total_fields = len(result)
+        # Convert Pydantic model to dict if needed
+        result_dict = get_dict_from_pydantic(result)
+        total_fields = len(result_dict)
         st.metric("Total Fields", total_fields)
     with col4:
-        valid_fields = sum(1 for v in result.values() if v and v != "NA" and v != "Error in analysis")
+        # Convert Pydantic model to dict if needed
+        result_dict = get_dict_from_pydantic(result)
+        valid_fields = sum(1 for v in result_dict.values() if v and v != "NA" and v != "Error in analysis")
         st.metric("Valid Fields", valid_fields)
     
     # Display results in a table
@@ -140,7 +156,11 @@ def display_analysis_results(result, model_name, analysis_time):
     
     # Create a DataFrame for better display
     results_data = []
-    for field, value in result.items():
+    
+    # Convert Pydantic model to dict if needed
+    result_dict = get_dict_from_pydantic(result)
+    
+    for field, value in result_dict.items():
         if value and value != "NA" and value != "Error in analysis":
             results_data.append({
                 "Field": field,
@@ -173,7 +193,9 @@ def create_comparison_table(comparison_results):
     # First pass: collect all unique fields
     for result in comparison_results:
         if result["success"]:
-            all_fields.update(result["result"].keys())
+            # Convert Pydantic model to dict if needed
+            result_dict = get_dict_from_pydantic(result["result"])
+            all_fields.update(result_dict.keys())
     
     # Sort fields for consistent display
     field_order = [
@@ -211,17 +233,20 @@ def create_comparison_table(comparison_results):
             model = result["model"]
             time_taken = result["time"]
             
+            # Convert Pydantic model to dict if needed
+            result_dict = get_dict_from_pydantic(result["result"])
+            
             # Create row data with all fields
             row_data = {
                 "Model": model,
                 "Analysis Time (s)": f"{time_taken:.2f}",
-                "Analysis Method": result["result"].get("analysis_method", "N/A")
+                "Analysis Method": result_dict.get("analysis_method", "N/A")
             }
             
             # Add all fields
             for field in field_order:
-                if field in result["result"]:
-                    value = result["result"][field]
+                if field in result_dict:
+                    value = result_dict[field]
                     # Truncate long values for display
                     if isinstance(value, str) and len(value) > 50:
                         display_value = value[:47] + "..."

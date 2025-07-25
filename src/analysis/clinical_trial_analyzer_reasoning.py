@@ -334,7 +334,7 @@ Return a JSON object with the following structure:
     
     # These methods are inherited from BaseAnalyzer
     
-    def _make_api_call(self, prompt: str, max_tokens: int = 2000, background: bool = False, webhook_url: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> str:
+    def _make_api_call(self, prompt: str, max_tokens: int = 2000, background: bool = False, webhook_url: Optional[str] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Union[str, Dict[str, Any]]:
         """
         Make an API call to either the Responses API (for o3) or Chat Completions API (for other models)
         
@@ -346,7 +346,7 @@ Return a JSON object with the following structure:
             tools: List of tools to use with the API call
             
         Returns:
-            String containing the API response content
+            String or Dict containing the API response content
         """
         try:
             # For o3 model, use the reasoning API
@@ -375,7 +375,38 @@ Return a JSON object with the following structure:
                 if background:
                     return f"Background job started with ID: {response.id}"
                 
-                return response.output
+                # Handle the response object - convert to dictionary
+                try:
+                    # Try to extract JSON content from the output
+                    import json
+                    output_str = response.output
+                    
+                    # Check if the output is already a dictionary
+                    if isinstance(output_str, dict):
+                        return output_str
+                        
+                    # Try to parse as JSON
+                    try:
+                        return json.loads(output_str)
+                    except (json.JSONDecodeError, TypeError):
+                        # If not valid JSON, return as structured dictionary
+                        return {
+                            "query_intent": output_str[:100],  # Use first 100 chars as query intent
+                            "filters": {},
+                            "search_strategy": "General search",
+                            "relevant_fields": ["nct_id", "primary_drug", "indication"],
+                            "confidence_score": 0.5
+                        }
+                except Exception as e:
+                    logger.error(f"Error parsing Responses API output: {e}")
+                    # Fallback to a structured dictionary
+                    return {
+                        "query_intent": f"Error analyzing query: {str(e)}",
+                        "filters": {},
+                        "search_strategy": "General search",
+                        "relevant_fields": ["nct_id", "primary_drug", "indication"],
+                        "confidence_score": 0.0
+                    }
             else:
                 # For other models, use the chat completions API
                 request_params = {
@@ -398,7 +429,14 @@ Return a JSON object with the following structure:
                 return response.choices[0].message.content
         except Exception as e:
             logger.error(f"API call error: {e}")
-            raise
+            # Return structured error response
+            return {
+                "query_intent": f"Error in API call: {str(e)}",
+                "filters": {},
+                "search_strategy": "Error recovery",
+                "relevant_fields": [],
+                "confidence_score": 0.0
+            }
 
     def _parse_json_response(self, content: Union[str, List, Dict]) -> Dict[str, Any]:
         """
@@ -1445,63 +1483,81 @@ I have provided you with:
     
     def analyze_query(self, query: str) -> QueryAnalysisResult:
         """
-        Analyze a natural language query using reasoning models to extract structured filters and query intent
+        Analyze a natural language query about clinical trials
         
         Args:
             query: Natural language query string
             
         Returns:
-            QueryAnalysisResult containing extracted filters, query intent, and analysis
+            QueryAnalysisResult object containing structured query analysis
         """
+        # Create prompt for query analysis
+        prompt = f"""
+        You are an expert Clinical Trial Query Analyzer. Your task is to analyze the following query about clinical trials and extract structured information.
+        
+        ## QUERY
+        {query}
+        
+        ## TASK
+        Analyze this query and extract:
+        1. Filters: Key-value pairs of filters that should be applied (e.g., indication, line of therapy, drug)
+        2. Query intent: The primary goal of the query (e.g., finding trials, comparing drugs)
+        3. Search strategy: How to approach answering this query
+        4. Relevant fields: Which fields from the clinical trial data are most relevant
+        5. Confidence score: How confident you are in your analysis (0.0-1.0)
+        
+        Return the results as a JSON object with these fields.
+        """
+        
+        # Make API call
         try:
-            # Create a reasoning prompt for query analysis
-            reasoning_prompt = f"""
-            Analyze the following natural language query about clinical trials and extract structured information:
+            response = self._make_api_call(prompt, max_tokens=1000)
             
-            Query: "{query}"
+            # Handle different response types
+            if isinstance(response, dict):
+                # If we already have a dictionary, use it
+                result_dict = response
+            else:
+                # If we have a string, try to parse it
+                result_dict = self._parse_json_response(response)
             
-            Please extract:
-            1. Structured filters (drug names, indications, phases, status, etc.)
-            2. Query intent (what the user is looking for)
-            3. Suggested search strategy
-            4. Relevant fields to focus on
+            # Ensure all required fields are present with valid types
+            default_result = {
+                "filters": {},
+                "query_intent": "General clinical trial query",
+                "search_strategy": "Standard search",
+                "relevant_fields": ["nct_id", "primary_drug", "indication"],
+                "confidence_score": 0.5
+            }
             
-            Return your analysis as a JSON object with the following structure:
-            {{
-                "filters": {{
-                    "primary_drug": "extracted drug name or null",
-                    "indication": "extracted indication or null", 
-                    "trial_phase": "extracted phase or null",
-                    "trial_status": "extracted status or null",
-                    "sponsor": "extracted sponsor or null",
-                    "line_of_therapy": "extracted line of therapy or null",
-                    "biomarker": "extracted biomarker or null"
-                }},
-                "query_intent": "description of what the user wants",
-                "search_strategy": "how to approach this search",
-                "relevant_fields": ["list", "of", "relevant", "fields"],
-                "confidence_score": 0.0-1.0
-            }}
+            # Merge with defaults for any missing fields
+            for key, default_value in default_result.items():
+                if key not in result_dict or not result_dict[key]:
+                    result_dict[key] = default_value
+                elif key == "confidence_score" and not isinstance(result_dict[key], (int, float)):
+                    # Convert string confidence to float if needed
+                    try:
+                        result_dict[key] = float(result_dict[key])
+                    except (ValueError, TypeError):
+                        result_dict[key] = default_value
+                elif key == "relevant_fields" and not isinstance(result_dict[key], list):
+                    # Convert string or other types to list if needed
+                    result_dict[key] = default_value
+                elif key == "filters" and not isinstance(result_dict[key], dict):
+                    # Convert non-dict filters to dict
+                    result_dict[key] = default_value
             
-            Focus on clinical trial terminology and be precise in your extraction.
-            """
-            
-            # Make API call
-            content = self._make_api_call(reasoning_prompt, 1500)
-            
-            # Parse JSON response
-            result_dict = self._parse_json_response(content)
-            
-            # Return as Pydantic model
+            # Return as QueryAnalysisResult object
             return QueryAnalysisResult(**result_dict)
             
         except Exception as e:
-            logger.error(f"Error in query analysis: {e}")
+            logger.error(f"Query analysis failed: {e}")
+            # Return minimal result
             return QueryAnalysisResult(
                 filters={},
-                query_intent=f"Error analyzing query: {e}",
-                search_strategy="Use basic keyword search",
-                relevant_fields=["primary_drug", "indication"],
+                query_intent=f"Error analyzing query: {str(e)}",
+                search_strategy="General search",
+                relevant_fields=["nct_id", "primary_drug", "indication"],
                 confidence_score=0.0
             )
     
