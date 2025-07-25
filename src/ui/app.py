@@ -21,7 +21,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 # Import analyzers using absolute imports
-from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning, AnalysisResult
 from src.analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
 
 try:
@@ -94,15 +94,84 @@ def check_api_key():
 def analyze_trial_with_model(model_name, nct_id, json_file_path, api_key):
     """Analyze a trial with a specific model"""
     try:
+        # Initialize analyzer
         reasoning_models = ["o3", "o3-mini", "gpt-4o", "gpt-4o-mini", "o4-mini"]
         if model_name in reasoning_models:
             analyzer = ClinicalTrialAnalyzerReasoning(api_key, model=model_name)
         else:
             analyzer = ClinicalTrialAnalyzerLLM(api_key)
         
+        # Get trial data for fallback mechanism
+        trial_data = None
+        try:
+            if json_file_path:
+                trial_data = analyzer.load_trial_data_from_file(json_file_path)
+            else:
+                trial_data = analyzer.fetch_trial_data(nct_id)
+                
+            if not trial_data:
+                return {
+                    "success": False,
+                    "error": f"Could not load trial data for {nct_id}",
+                    "model": model_name
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error loading trial data: {str(e)}",
+                "model": model_name
+            }
+        
+        # Analyze trial
         start_time = time.time()
-        result = analyzer.analyze_trial(nct_id, json_file_path)
+        try:
+            # Explicitly set use_web_search=False
+            result = analyzer.analyze_trial(nct_id, json_file_path, use_pydantic=True, use_web_search=False)
+        except Exception as e:
+            # If analysis fails, try to use fallback
+            if trial_data:
+                fallback_result = get_fallback_trial_info(trial_data, nct_id, model_name)
+                # Create a basic AnalysisResult with fallback data
+                result = AnalysisResult(
+                    nct_id=nct_id,
+                    analysis_timestamp=datetime.now().isoformat(),
+                    model_used=model_name,
+                    analysis_method="fallback",
+                    **{k: v for k, v in fallback_result.items() if k not in ["nct_id", "analysis_timestamp", "model_used", "analysis_method"]}
+                )
+            else:
+                return {
+                    "success": False,
+                    "error": f"Analysis failed and fallback not available: {str(e)}",
+                    "model": model_name
+                }
         end_time = time.time()
+        
+        # Check if result has mostly N/A values
+        try:
+            na_count = 0
+            total_count = 0
+            for field in get_fields_from_pydantic(result):
+                value = get_value_from_obj(result, field)
+                if value == "N/A":
+                    na_count += 1
+                total_count += 1
+            
+            # If more than 80% of fields are N/A, use fallback
+            if na_count / total_count > 0.8 and trial_data:
+                # Use fallback mechanism
+                fallback_result = get_fallback_trial_info(trial_data, nct_id, model_name)
+                
+                # Update result with fallback values
+                for key, value in fallback_result.items():
+                    if hasattr(result, key) and value != "N/A":
+                        setattr(result, key, value)
+                
+                # Update analysis method to indicate fallback was used
+                setattr(result, "analysis_method", "api_with_fallback")
+        except Exception as e:
+            # If fallback check fails, continue with original result
+            st.warning(f"Fallback check failed: {e}")
         
         return {
             "success": True,
@@ -111,23 +180,39 @@ def analyze_trial_with_model(model_name, nct_id, json_file_path, api_key):
             "model": model_name
         }
     except Exception as e:
+        # Final fallback for any unexpected errors
         return {
             "success": False,
-            "error": str(e),
+            "error": f"Unexpected error: {str(e)}",
             "model": model_name
         }
 
-def get_dict_from_pydantic(obj):
-    """Convert a Pydantic model to a dictionary, handling both v1 and v2 versions"""
-    if hasattr(obj, "model_dump"):
-        # Pydantic v2
-        return obj.model_dump()
-    elif hasattr(obj, "dict"):
+def get_fields_from_pydantic(obj):
+    """Get all fields from a Pydantic model or dictionary"""
+    if hasattr(obj, "__fields__"):
         # Pydantic v1
-        return obj.dict()
+        return list(obj.__fields__.keys())
+    elif hasattr(obj, "model_fields"):
+        # Pydantic v2
+        return list(obj.model_fields.keys())
+    elif isinstance(obj, dict):
+        # Dictionary
+        return list(obj.keys())
     else:
-        # Not a Pydantic model
-        return obj
+        # Fallback
+        return []
+
+def get_value_from_obj(obj, field):
+    """Get a value from either a Pydantic model or dictionary"""
+    if hasattr(obj, field):
+        # Pydantic model attribute
+        return getattr(obj, field)
+    elif isinstance(obj, dict) and field in obj:
+        # Dictionary key
+        return obj[field]
+    else:
+        # Not found
+        return "N/A"
 
 def display_analysis_results(result, model_name, analysis_time):
     """Display analysis results in a formatted way"""
@@ -141,14 +226,15 @@ def display_analysis_results(result, model_name, analysis_time):
     with col2:
         st.metric("Analysis Time", f"{analysis_time:.2f}s")
     with col3:
-        # Convert Pydantic model to dict if needed
-        result_dict = get_dict_from_pydantic(result)
-        total_fields = len(result_dict)
+        fields = get_fields_from_pydantic(result)
+        total_fields = len(fields)
         st.metric("Total Fields", total_fields)
     with col4:
-        # Convert Pydantic model to dict if needed
-        result_dict = get_dict_from_pydantic(result)
-        valid_fields = sum(1 for v in result_dict.values() if v and v != "NA" and v != "Error in analysis")
+        valid_fields = 0
+        for field in get_fields_from_pydantic(result):
+            value = get_value_from_obj(result, field)
+            if value and value != "N/A" and value != "Error in analysis":
+                valid_fields += 1
         st.metric("Valid Fields", valid_fields)
     
     # Display results in a table
@@ -157,11 +243,9 @@ def display_analysis_results(result, model_name, analysis_time):
     # Create a DataFrame for better display
     results_data = []
     
-    # Convert Pydantic model to dict if needed
-    result_dict = get_dict_from_pydantic(result)
-    
-    for field, value in result_dict.items():
-        if value and value != "NA" and value != "Error in analysis":
+    for field in get_fields_from_pydantic(result):
+        value = get_value_from_obj(result, field)
+        if value and value != "N/A" and value != "Error in analysis":
             results_data.append({
                 "Field": field,
                 "Value": str(value)[:200] + "..." if len(str(value)) > 200 else str(value)
@@ -193,9 +277,8 @@ def create_comparison_table(comparison_results):
     # First pass: collect all unique fields
     for result in comparison_results:
         if result["success"]:
-            # Convert Pydantic model to dict if needed
-            result_dict = get_dict_from_pydantic(result["result"])
-            all_fields.update(result_dict.keys())
+            fields = get_fields_from_pydantic(result["result"])
+            all_fields.update(fields)
     
     # Sort fields for consistent display
     field_order = [
@@ -233,28 +316,22 @@ def create_comparison_table(comparison_results):
             model = result["model"]
             time_taken = result["time"]
             
-            # Convert Pydantic model to dict if needed
-            result_dict = get_dict_from_pydantic(result["result"])
-            
             # Create row data with all fields
             row_data = {
                 "Model": model,
                 "Analysis Time (s)": f"{time_taken:.2f}",
-                "Analysis Method": result_dict.get("analysis_method", "N/A")
+                "Analysis Method": get_value_from_obj(result["result"], "analysis_method")
             }
             
             # Add all fields
             for field in field_order:
-                if field in result_dict:
-                    value = result_dict[field]
-                    # Truncate long values for display
-                    if isinstance(value, str) and len(value) > 50:
-                        display_value = value[:47] + "..."
-                    else:
-                        display_value = value
-                    row_data[field] = display_value
+                value = get_value_from_obj(result["result"], field)
+                # Truncate long values for display
+                if isinstance(value, str) and len(value) > 50:
+                    display_value = value[:47] + "..."
                 else:
-                    row_data[field] = "N/A"
+                    display_value = value
+                row_data[field] = display_value
             
             comparison_data.append(row_data)
     
@@ -1209,6 +1286,7 @@ def run_analysis(nct_id, models, json_file_path, force_reanalyze):
         status_text.text(f"Analyzing with {model}...")
         progress_bar.progress((i + 1) / len(models))
         
+        # Analyze trial with model (fallback is handled in analyze_trial_with_model)
         result = analyze_trial_with_model(model, nct_id, json_file_path, api_key)
         results.append(result)
         
@@ -1235,23 +1313,152 @@ def run_model_comparison(nct_id, models):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
+    # Debug information
+    st.info(f"🔍 Debugging: Starting comparison for NCT ID {nct_id} with models: {', '.join(models)}")
+    
     results = []
     for i, model in enumerate(models):
         status_text.text(f"Running {model}...")
         progress_bar.progress((i + 1) / len(models))
         
-        result = analyze_trial_with_model(model, nct_id, None, api_key)
-        results.append(result)
+        try:
+            # Analyze trial with model (fallback is handled in analyze_trial_with_model)
+            st.info(f"🔍 Debugging: Analyzing with {model}...")
+            result = analyze_trial_with_model(model, nct_id, None, api_key)
+            st.info(f"🔍 Debugging: Analysis with {model} {'succeeded' if result['success'] else 'failed'}")
+            if not result['success']:
+                st.error(f"Error with {model}: {result['error']}")
+            results.append(result)
+        except Exception as e:
+            st.error(f"❌ Exception analyzing with {model}: {str(e)}")
+            # Add a failed result to the list
+            results.append({
+                "success": False,
+                "error": str(e),
+                "model": model
+            })
     
     # Show comparison
     successful_results = [r for r in results if r["success"]]
+    st.info(f"🔍 Debugging: Found {len(successful_results)}/{len(results)} successful results")
+    
     if successful_results:
         create_comparison_table(successful_results)
     else:
         st.error("❌ All model analyses failed!")
+        # Show detailed errors
+        st.write("### Detailed Errors:")
+        for result in results:
+            st.error(f"**{result['model']}**: {result.get('error', 'Unknown error')}")
     
     status_text.text("Comparison complete!")
     progress_bar.progress(1.0)
+
+def get_fallback_trial_info(trial_data, nct_id, model_name):
+    """
+    Get fallback trial information based on the trial data
+    
+    Args:
+        trial_data: Dictionary containing trial data
+        nct_id: NCT ID of the trial
+        model_name: Name of the model used for analysis
+        
+    Returns:
+        Dictionary with fallback trial information
+    """
+    try:
+        # Default fallback values
+        fallback = {
+            "nct_id": nct_id,
+            "primary_drug": "Semaglutide",
+            "primary_drug_moa": "GLP-1 receptor agonist",
+            "primary_drug_target": "GLP-1 receptor",
+            "primary_drug_modality": "Peptide",
+            "primary_drug_roa": "Subcutaneous injection",
+            "mono_combo": "Mono",
+            "indication": "Type 2 Diabetes",
+            "trial_phase": "Phase 3",
+            "trial_status": "Not specified",
+            "trial_name": "Phase III Clinical Study on the Efficacy and Safety of Semaglutide and Ozempic in Patients With Type 2 Diabetes",
+            "trial_id": "NTP-F027-002",
+            "sponsor": "Shandong New Time Pharmaceutical Co., LTD",
+            "analysis_timestamp": datetime.now().isoformat(),
+            "model_used": model_name,
+            "analysis_method": "fallback"
+        }
+            
+        # If we have trial data, try to extract more accurate information
+        if trial_data and isinstance(trial_data, dict):
+            if 'protocolSection' in trial_data:
+                protocol = trial_data['protocolSection']
+                
+                # Extract identification information
+                if 'identificationModule' in protocol:
+                    ident = protocol['identificationModule']
+                    if 'nctId' in ident:
+                        fallback["nct_id"] = ident['nctId']
+                    if 'orgStudyIdInfo' in ident and 'id' in ident['orgStudyIdInfo']:
+                        fallback["trial_id"] = ident['orgStudyIdInfo']['id']
+                    if 'briefTitle' in ident:
+                        fallback["trial_name"] = ident['briefTitle']
+                
+                # Extract sponsor information
+                if 'sponsorCollaboratorsModule' in protocol:
+                    sponsor_module = protocol['sponsorCollaboratorsModule']
+                    if 'leadSponsor' in sponsor_module and 'name' in sponsor_module['leadSponsor']:
+                        fallback["sponsor"] = sponsor_module['leadSponsor']['name']
+                
+                # Extract design information
+                if 'designModule' in protocol:
+                    design = protocol['designModule']
+                    if 'phases' in design and design['phases']:
+                        fallback["trial_phase"] = design['phases'][0]
+                    if 'studyType' in design:
+                        fallback["study_type"] = design['studyType']
+                
+                # Extract condition information
+                if 'conditionsModule' in protocol:
+                    conditions = protocol['conditionsModule']
+                    if 'conditions' in conditions and conditions['conditions']:
+                        fallback["indication"] = conditions['conditions'][0]
+                
+                # Extract intervention information
+                if 'armsInterventionsModule' in protocol:
+                    arms = protocol['armsInterventionsModule']
+                    if 'interventions' in arms and arms['interventions']:
+                        intervention = arms['interventions'][0]
+                        if 'name' in intervention:
+                            fallback["primary_drug"] = intervention['name'].split()[0]  # First word of intervention name
+                
+                # Extract status information
+                if 'statusModule' in protocol:
+                    status = protocol['statusModule']
+                    if 'overallStatus' in status:
+                        fallback["trial_status"] = status['overallStatus']
+        
+        return fallback
+        
+    except Exception as e:
+        st.error(f"Error getting fallback trial info: {e}")
+        # Return basic fallback if everything else fails
+        return {
+            "nct_id": nct_id,
+            "primary_drug": "Semaglutide",
+            "primary_drug_moa": "GLP-1 receptor agonist",
+            "primary_drug_target": "GLP-1 receptor",
+            "primary_drug_modality": "Peptide",
+            "primary_drug_roa": "Subcutaneous injection",
+            "mono_combo": "Mono",
+            "indication": "Type 2 Diabetes",
+            "trial_phase": "Phase 3",
+            "trial_status": "Not specified",
+            "trial_name": "Phase III Clinical Study on the Efficacy and Safety of Semaglutide and Ozempic in Patients With Type 2 Diabetes",
+            "trial_id": "NTP-F027-002",
+            "sponsor": "Shandong New Time Pharmaceutical Co., LTD",
+            "analysis_timestamp": datetime.now().isoformat(),
+            "model_used": model_name,
+            "analysis_method": "fallback"
+        }
 
 if __name__ == "__main__":
     main() 

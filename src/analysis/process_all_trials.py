@@ -125,8 +125,9 @@ class TrialProcessor:
             start_time = time.time()
             analyzer = self.analyzers[model_name]
             
-            # Analyze the trial
-            result = analyzer.analyze_trial(nct_id, None)
+            # Analyze the trial - use web search for o3 model
+            use_web_search = model_name == "o3"
+            result = analyzer.analyze_trial(nct_id, None, use_web_search=use_web_search)
             end_time = time.time()
             
             analysis_time = end_time - start_time

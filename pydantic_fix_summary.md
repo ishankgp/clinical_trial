@@ -10,9 +10,9 @@ AttributeError: 'AnalysisResult' object has no attribute 'keys'
 
 This occurred because we updated the `clinical_trial_analyzer_reasoning.py` to use Pydantic models for structured output, but didn't update the UI code to handle these models.
 
-## Solution
+## Initial Solution
 
-1. Added a helper function to convert Pydantic models to dictionaries:
+Our first approach was to convert Pydantic models to dictionaries using `model_dump()` or `dict()` methods:
 
 ```python
 def get_dict_from_pydantic(obj):
@@ -28,30 +28,59 @@ def get_dict_from_pydantic(obj):
         return obj
 ```
 
-2. Updated the `display_analysis_results` function to use this helper:
+However, this approach had issues with field processing and data loss during conversion.
+
+## Improved Solution
+
+We improved the solution by directly accessing Pydantic model attributes instead of converting to dictionaries:
+
+1. Added a helper function to get all fields from a Pydantic model:
 
 ```python
-# Convert Pydantic model to dict if needed
-result_dict = get_dict_from_pydantic(result)
+def get_fields_from_pydantic(obj):
+    """Get all fields from a Pydantic model or dictionary"""
+    if hasattr(obj, "__fields__"):
+        # Pydantic v1
+        return list(obj.__fields__.keys())
+    elif hasattr(obj, "model_fields"):
+        # Pydantic v2
+        return list(obj.model_fields.keys())
+    elif isinstance(obj, dict):
+        # Dictionary
+        return list(obj.keys())
+    else:
+        # Fallback
+        return []
 ```
 
-3. Updated the `create_comparison_table` function to use this helper:
+2. Added a helper function to get values from either Pydantic models or dictionaries:
 
 ```python
-# Convert Pydantic model to dict if needed
-result_dict = get_dict_from_pydantic(result["result"])
+def get_value_from_obj(obj, field):
+    """Get a value from either a Pydantic model or dictionary"""
+    if hasattr(obj, field):
+        # Pydantic model attribute
+        return getattr(obj, field)
+    elif isinstance(obj, dict) and field in obj:
+        # Dictionary key
+        return obj[field]
+    else:
+        # Not found
+        return "N/A"
 ```
+
+3. Updated the UI functions to use these helpers:
+   - `display_analysis_results` now uses `get_fields_from_pydantic` and `get_value_from_obj`
+   - `create_comparison_table` now uses the same approach for field discovery and value retrieval
 
 ## Benefits
 
-1. **Backward Compatibility**: The code now works with both Pydantic v1 and v2 models
-2. **Forward Compatibility**: The code will continue to work with dictionary results from other analyzers
-3. **Error Handling**: Gracefully handles non-Pydantic objects
+1. **Direct Access**: Accesses Pydantic model attributes directly without conversion
+2. **No Data Loss**: Preserves all field values without potential data loss during conversion
+3. **Backward Compatibility**: Works with both Pydantic models and dictionaries
+4. **Version Agnostic**: Compatible with both Pydantic v1 and v2
+5. **Robust Field Discovery**: Uses internal Pydantic metadata to discover all fields
 
 ## Testing
 
-The UI now successfully handles the Pydantic model objects returned by the `ClinicalTrialAnalyzerReasoning` class, allowing for:
-
-1. Displaying individual analysis results
-2. Creating comparison tables across multiple models
-3. Downloading results as CSV files 
+The UI now successfully handles the Pydantic model objects returned by the `ClinicalTrialAnalyzerReasoning` class, properly displaying all fields and values without data loss or format issues. 
