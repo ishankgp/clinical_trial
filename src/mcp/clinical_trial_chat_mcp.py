@@ -13,7 +13,14 @@ from typing import List, Dict, Any, Optional
 import logging
 from datetime import datetime
 import os
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
+
+# Add the project root to the Python path for proper imports
+project_root = Path(__file__).resolve().parents[2]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -301,7 +308,15 @@ class ClinicalTrialChatMCP:
     def _call_mcp_function(self, function_name: str, arguments: Dict[str, Any]) -> str:
         """Call MCP function and return result"""
         try:
-            # Import database using absolute import
+            # Import database using proper import path
+            import sys
+            from pathlib import Path
+            
+            # Ensure project root is in path
+            project_root = Path(__file__).resolve().parents[2]
+            if str(project_root) not in sys.path:
+                sys.path.insert(0, str(project_root))
+                
             from src.database.clinical_trial_database import ClinicalTrialDatabase
             
             db = ClinicalTrialDatabase()
@@ -406,6 +421,11 @@ class ClinicalTrialChatMCP:
                 
                 # Use enhanced LLM-based query processing
                 try:
+                    # Ensure project root is in path
+                    project_root = Path(__file__).resolve().parents[2]
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
+                        
                     # Import the reasoning analyzer for advanced query processing
                     from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     
@@ -419,9 +439,9 @@ class ClinicalTrialChatMCP:
                     analysis_result = analyzer.analyze_query(query)
                     
                     # Extract filters from the analysis
-                    filters = analysis_result.get('filters', {})
-                    query_intent = analysis_result.get('query_intent', 'N/A')
-                    confidence = analysis_result.get('confidence_score', 0.0)
+                    filters = analysis_result.filters  # Access as attribute, not dictionary
+                    query_intent = analysis_result.query_intent
+                    confidence = analysis_result.confidence_score
                     
                     # Perform search with extracted filters
                     results = db.search_trials(filters, 20)
@@ -533,6 +553,11 @@ class ClinicalTrialChatMCP:
                 
                 # Use the reasoning analyzer with document attachment for o3 models
                 try:
+                    # Ensure project root is in path
+                    project_root = Path(__file__).resolve().parents[2]
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
+                        
                     from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=reasoning_model)
                     
@@ -543,15 +568,15 @@ class ClinicalTrialChatMCP:
                         analysis_result = analyzer.analyze_query(query)
                     
                     # Search for trials based on extracted filters
-                    filters = analysis_result.get('filters', {})
+                    filters = analysis_result.filters
                     results = db.search_trials(filters, limit)
                     
                     # Format the response
                     response = f"🧠 **Advanced Reasoning Query Analysis** (using {reasoning_model})\n\n"
                     response += f"**Query:** {query}\n\n"
-                    response += f"**Intent:** {analysis_result.get('query_intent', 'N/A')}\n\n"
-                    response += f"**Confidence:** {analysis_result.get('confidence_score', 'N/A')}\n\n"
-                    response += f"**Search Strategy:** {analysis_result.get('search_strategy', 'N/A')}\n\n"
+                    response += f"**Intent:** {analysis_result.query_intent}\n\n"
+                    response += f"**Confidence:** {analysis_result.confidence_score}\n\n"
+                    response += f"**Search Strategy:** {analysis_result.search_strategy}\n\n"
                     
                     if results:
                         response += f"**Found {len(results)} trials:**\n\n"
@@ -576,11 +601,12 @@ class ClinicalTrialChatMCP:
                 
                 # Use reasoning model for comparison analysis
                 try:
-                    import sys
-                    analysis_path = os.path.join(os.path.dirname(__file__), '..', 'analysis')
-                    if analysis_path not in sys.path:
-                        sys.path.append(analysis_path)
-                    from clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+                    # Ensure project root is in path
+                    project_root = Path(__file__).resolve().parents[2]
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
+                        
+                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     model = "o3" if analysis_depth == "expert" else "o3-mini"
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
                     
@@ -588,13 +614,13 @@ class ClinicalTrialChatMCP:
                     analysis_result = analyzer.analyze_query(comparison_criteria)
                     
                     # Find trials for comparison
-                    filters = analysis_result.get('filters', {})
+                    filters = analysis_result.filters
                     results = db.search_trials(filters, 20)
                     
                     response = f"🔍 **AI-Powered Comparison Analysis** (using {model})\n\n"
                     response += f"**Comparison Criteria:** {comparison_criteria}\n\n"
                     response += f"**Analysis Depth:** {analysis_depth}\n\n"
-                    response += f"**Query Intent:** {analysis_result.get('query_intent', 'N/A')}\n\n"
+                    response += f"**Query Intent:** {analysis_result.query_intent}\n\n"
                     
                     if results:
                         response += f"**Trials for Comparison ({len(results)} found):**\n\n"
@@ -624,6 +650,11 @@ class ClinicalTrialChatMCP:
                 
                 # Use reasoning model for trend analysis
                 try:
+                    # Ensure project root is in path
+                    project_root = Path(__file__).resolve().parents[2]
+                    if str(project_root) not in sys.path:
+                        sys.path.insert(0, str(project_root))
+                        
                     from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
                     model = "o3" if group_by == "expert" else "o3-mini"
                     analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
@@ -638,7 +669,7 @@ class ClinicalTrialChatMCP:
                     response += f"**Trend Query:** {trend_query}\n\n"
                     response += f"**Time Period:** {time_period}\n\n"
                     response += f"**Grouping:** {group_by}\n\n"
-                    response += f"**Query Intent:** {analysis_result.get('query_intent', 'N/A')}\n\n"
+                    response += f"**Query Intent:** {analysis_result.query_intent}\n\n"
                     
                     if all_trials:
                         # Simple trend analysis based on grouping

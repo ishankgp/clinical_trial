@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-Clinical Trial MCP Server - Fixed Version
-Addresses logic gaps in the original implementation
+Clinical Trial MCP Server
+Provides MCP-compatible API for clinical trial analysis and search
 """
 
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Sequence
-from datetime import datetime
 import os
 import sys
 from pathlib import Path
-import sqlite3
-import pandas as pd
+from typing import Dict, List, Any, Optional, Union, AsyncGenerator
+from datetime import datetime
 from contextlib import asynccontextmanager
+import traceback
 
-# MCP imports
+# Add the project root to the Python path for proper imports
+project_root = Path(__file__).resolve().parents[2]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Import MCP types
 try:
     from mcp.server import Server
     from mcp.server.models import InitializationOptions
@@ -32,7 +40,8 @@ try:
         EmbeddedResource,
         LoggingLevel,
     )
-except Exception:  # pragma: no cover - fallback to local stubs
+except ImportError:
+    # Fallback to local types if MCP package not available
     from .server_stub import (
         Server,
         InitializationOptions,
@@ -45,11 +54,8 @@ except Exception:  # pragma: no cover - fallback to local stubs
         LoggingLevel,
         ListToolsRequest,
         CallToolRequest,
+        stdio_server,
     )
-
-    def stdio_server(*args, **kwargs):
-        pass
-
 
 # Add src to Python path for imports
 current_dir = Path(__file__).parent
@@ -206,11 +212,15 @@ class ClinicalTrialMCPServer:
     def _init_database(self):
         """Initialize database connection"""
         try:
+            from src.database.clinical_trial_database import ClinicalTrialDatabase
             self.db = ClinicalTrialDatabase()
             logger.info("Database initialized successfully")
+        except ImportError:
+            logger.error("ClinicalTrialDatabase module not available")
+            raise ImportError("ClinicalTrialDatabase module not available")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
-            raise DatabaseError(f"Database initialization failed: {e}")
+            raise
 
     def _init_cache(self):
         """Initialize cache manager"""
@@ -223,25 +233,32 @@ class ClinicalTrialMCPServer:
             self.cache_manager = None
 
     def _init_analyzers(self):
-        """Initialize analyzers with API key"""
+        """Initialize analyzers for different models"""
         try:
+            # Import analyzers
+            from src.analysis.clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
+            from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
+            
+            # Get API key
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                raise ValueError("OPENAI_API_KEY environment variable not set")
+                raise ValueError("OPENAI_API_KEY not found in environment")
             
-            # Initialize analyzers
+            # Initialize analyzers for different models
             self.analyzers = {
-                "gpt-4o": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4o"),
-                "gpt-4o-mini": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4o-mini"),
+                "gpt-4o": ClinicalTrialAnalyzerLLM(api_key, model="gpt-4o"),
+                "gpt-4o-mini": ClinicalTrialAnalyzerLLM(api_key, model="gpt-4o-mini"),
                 "o3": ClinicalTrialAnalyzerReasoning(api_key, model="o3"),
-                "gpt-4": ClinicalTrialAnalyzerReasoning(api_key, model="gpt-4"),
-                "llm": ClinicalTrialAnalyzerLLM(api_key)
+                "gpt-4": ClinicalTrialAnalyzerLLM(api_key, model="gpt-4"),
             }
             
             logger.info("Analyzers initialized successfully")
+        except ImportError as e:
+            logger.error(f"Failed to import analyzers: {e}")
+            self.analyzers = {}
         except Exception as e:
             logger.error(f"Failed to initialize analyzers: {e}")
-            raise ValueError(f"Analyzer initialization failed: {e}")
+            self.analyzers = {}
     
     async def _get_analyzer(self, model_name: str):
         """Get analyzer for specified model"""
@@ -394,6 +411,89 @@ class ClinicalTrialMCPServer:
                             "required": ["query"],
                         },
                     ),
+                    Tool(
+                        name="reasoning_query",
+                        description="Advanced semantic search using reasoning models for complex clinical trial questions",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "Complex natural language query requiring reasoning",
+                                },
+                                "reasoning_model": {
+                                    "type": "string",
+                                    "enum": ["o3", "o3-mini"],
+                                    "default": "o3-mini",
+                                    "description": "Reasoning model to use for query interpretation",
+                                },
+                                "include_analysis": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Include AI analysis and insights",
+                                },
+                                "limit": {"type": "integer", "default": 20},
+                                "format": {
+                                    "type": "string",
+                                    "enum": ["detailed", "analysis", "json"],
+                                    "default": "detailed",
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    ),
+                    Tool(
+                        name="compare_analysis",
+                        description="AI-powered comparison of clinical trials using reasoning models",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "comparison_criteria": {
+                                    "type": "string",
+                                    "description": "Natural language criteria for comparison",
+                                },
+                                "auto_find_similar": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Automatically find similar trials",
+                                },
+                                "analysis_depth": {
+                                    "type": "string",
+                                    "enum": ["basic", "detailed", "expert"],
+                                    "default": "detailed",
+                                },
+                            },
+                            "required": ["comparison_criteria"],
+                        },
+                    ),
+                    Tool(
+                        name="trend_analysis",
+                        description="Analyze trends and patterns in clinical trial data using reasoning models",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {
+                                "trend_query": {
+                                    "type": "string",
+                                    "description": "Natural language trend analysis query",
+                                },
+                                "time_period": {
+                                    "type": "string",
+                                    "description": "Time period for analysis (e.g., 'last 5 years')",
+                                },
+                                "group_by": {
+                                    "type": "string",
+                                    "enum": ["drug", "indication", "phase", "sponsor", "expert"],
+                                    "default": "drug",
+                                },
+                                "include_insights": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "Include AI insights and analysis",
+                                },
+                            },
+                            "required": ["trend_query"],
+                        },
+                    ),
                 ]
             )
 
@@ -419,6 +519,18 @@ class ClinicalTrialMCPServer:
                     if "query" not in arguments:
                         raise ValidationError("query is required for smart_search")
                     result = await self._smart_search(arguments)
+                elif name == "reasoning_query":
+                    if "query" not in arguments:
+                        raise ValidationError("query is required for reasoning_query")
+                    result = await self._reasoning_query(arguments)
+                elif name == "compare_analysis":
+                    if "comparison_criteria" not in arguments:
+                        raise ValidationError("comparison_criteria is required for compare_analysis")
+                    result = await self._compare_analysis(arguments)
+                elif name == "trend_analysis":
+                    if "trend_query" not in arguments:
+                        raise ValidationError("trend_query is required for trend_analysis")
+                    result = await self._trend_analysis(arguments)
                 else:
                     return CallToolResult(
                         content=[TextContent(type="text", text=f"Unknown tool: {name}")]
@@ -601,6 +713,562 @@ class ClinicalTrialMCPServer:
                 return self._format_table(results)
         except Exception as e:
             raise AnalysisError(f"Smart search failed: {str(e)}")
+
+    async def _reasoning_query(self, arguments: Dict[str, Any]) -> str:
+        """
+        Advanced semantic search using reasoning models for complex clinical trial queries
+        This provides more sophisticated analysis than the basic smart_search
+        """
+        query = arguments["query"]
+        reasoning_model = arguments.get("reasoning_model", "o3-mini")
+        include_analysis = arguments.get("include_analysis", True)
+        limit = arguments.get("limit", 20)
+        format_type = arguments.get("format", "detailed")
+        
+        try:
+            # Get the appropriate analyzer
+            analyzer = await self._get_analyzer(reasoning_model)
+            
+            # Enhanced query analysis with reasoning model
+            enhanced_prompt = f"""
+            You are an expert clinical trial analyst with deep domain knowledge. Analyze this complex query about clinical trials:
+            
+            QUERY: "{query}"
+            
+            TASK: Perform a detailed semantic analysis of this query to extract structured search parameters and generate insights.
+            
+            1. Extract all relevant search parameters including:
+               - Drugs (including drug classes, mechanisms, modalities)
+               - Indications (diseases, conditions, specific subtypes)
+               - Trial phases
+               - Trial status
+               - Patient populations
+               - Biomarkers
+               - Geographic regions
+               - Sponsors or sponsor types
+               - Endpoints or outcome measures
+               - Any other relevant parameters
+            
+            2. Identify the core intent of the query
+            
+            3. Develop a search strategy that would best address this query
+            
+            4. Determine which database fields would be most relevant to search
+            
+            5. Generate insights about what the user is likely trying to learn
+            
+            RESPONSE FORMAT: Return a JSON object with the following structure:
+            {{
+                "filters": {{
+                    "primary_drug": ["list", "of", "drug", "names", "and", "classes"],
+                    "indication": ["list", "of", "diseases", "and", "conditions"],
+                    "trial_phase": ["PHASE1", "PHASE2", ...],
+                    "trial_status": ["RECRUITING", ...],
+                    "sponsor": ["list", "of", "sponsors"],
+                    "line_of_therapy": ["first line", ...],
+                    "biomarker": ["list", "of", "biomarkers"],
+                    "enrollment_min": number or null,
+                    "enrollment_max": number or null,
+                    "geography": ["US", ...]
+                }},
+                "query_intent": "Detailed description of what the user is trying to learn",
+                "search_strategy": "Detailed explanation of how to approach this search",
+                "relevant_fields": ["list", "of", "database", "fields", "to", "search"],
+                "confidence_score": 0.0-1.0,
+                "semantic_analysis": "In-depth analysis of the query's meaning and implications",
+                "suggested_follow_ups": ["list", "of", "follow-up", "questions", "or", "refinements"]
+            }}
+            """
+            
+            # Get LLM response - note that analyze_query is not async
+            try:
+                # Call the non-async analyze_query method
+                analysis_result = analyzer.analyze_query(enhanced_prompt)
+                
+                # Convert the QueryAnalysisResult to a dictionary
+                parsed_result = analysis_result.dict()
+                
+                # Normalize the filters
+                filters = parsed_result.get("filters", {})
+                for k, v in filters.items():
+                    if v is None:
+                        filters[k] = []
+                    elif not isinstance(v, list):
+                        filters[k] = [v]
+                
+                # Search for trials based on the extracted filters
+                search_results = self.db.search_trials(filters, limit)
+                
+                # Format the response based on the requested format
+                if format_type == "json":
+                    # Return full JSON with both analysis and results
+                    full_result = {
+                        "analysis": parsed_result,
+                        "results": search_results
+                    }
+                    return json.dumps(full_result, indent=2)
+                
+                elif format_type == "analysis":
+                    # Focus on the analysis with minimal results
+                    response = f"## Semantic Analysis of: '{query}'\n\n"
+                    response += f"**Query Intent:** {parsed_result.get('query_intent', 'N/A')}\n\n"
+                    response += f"**Search Strategy:** {parsed_result.get('search_strategy', 'N/A')}\n\n"
+                    response += f"**Confidence Score:** {parsed_result.get('confidence_score', 'N/A')}\n\n"
+                    
+                    if "semantic_analysis" in parsed_result:
+                        response += f"**Semantic Analysis:**\n{parsed_result['semantic_analysis']}\n\n"
+                    
+                    response += f"**Extracted Filters:**\n"
+                    for filter_name, filter_values in filters.items():
+                        if filter_values:
+                            response += f"- {filter_name}: {', '.join(str(v) for v in filter_values)}\n"
+                    
+                    response += f"\n**Results Summary:** Found {len(search_results)} matching trials\n\n"
+                    
+                    if "suggested_follow_ups" in parsed_result and parsed_result["suggested_follow_ups"]:
+                        response += "**Suggested Follow-ups:**\n"
+                        for i, follow_up in enumerate(parsed_result["suggested_follow_ups"], 1):
+                            response += f"{i}. {follow_up}\n"
+                    
+                    return response
+                
+                else:  # detailed format
+                    # Comprehensive response with both analysis and detailed results
+                    response = f"# Advanced Semantic Search Results\n\n"
+                    response += f"**Query:** {query}\n\n"
+                    response += f"**Intent:** {parsed_result.get('query_intent', 'N/A')}\n\n"
+                    
+                    if include_analysis:
+                        response += f"**Search Strategy:** {parsed_result.get('search_strategy', 'N/A')}\n\n"
+                        response += f"**Confidence:** {parsed_result.get('confidence_score', 'N/A')}\n\n"
+                        
+                        if "semantic_analysis" in parsed_result:
+                            response += f"**Semantic Analysis:**\n{parsed_result['semantic_analysis']}\n\n"
+                    
+                    response += f"## Search Results ({len(search_results)} trials found)\n\n"
+                    
+                    if search_results:
+                        for i, trial in enumerate(search_results[:min(10, len(search_results))], 1):
+                            response += f"### {i}. {trial.get('nct_id', 'Unknown ID')}\n"
+                            response += f"**Name:** {trial.get('trial_name', 'No name')}\n"
+                            response += f"**Phase:** {trial.get('trial_phase', 'N/A')}\n"
+                            response += f"**Status:** {trial.get('trial_status', 'N/A')}\n"
+                            response += f"**Sponsor:** {trial.get('sponsor', 'N/A')}\n"
+                            
+                            if trial.get('primary_drug'):
+                                response += f"**Drug:** {trial.get('primary_drug', 'N/A')}\n"
+                            
+                            if trial.get('indication'):
+                                response += f"**Indication:** {trial.get('indication', 'N/A')}\n"
+                            
+                            response += "\n"
+                        
+                        if len(search_results) > 10:
+                            response += f"... and {len(search_results) - 10} more trials\n\n"
+                    else:
+                        response += "No trials found matching the criteria.\n\n"
+                        
+                        # Provide suggestions when no results are found
+                        response += "**Suggestions:**\n"
+                        response += "- Try broadening your search terms\n"
+                        response += "- Check spelling of drug or disease names\n"
+                        response += "- Consider different trial phases or statuses\n"
+                    
+                    return response
+                
+            except json.JSONDecodeError:
+                # Handle non-JSON responses from the model
+                logger.warning(f"Non-JSON response from reasoning model: {analysis_result[:100]}...")
+                
+                # Attempt to extract some meaning from the text response
+                filters = self._enhanced_fallback_parsing(query)
+                search_results = self.db.search_trials(filters, limit)
+                
+                response = f"# Semantic Search Results (Fallback Mode)\n\n"
+                response += f"**Query:** {query}\n\n"
+                response += f"**Results:** Found {len(search_results)} trials\n\n"
+                
+                if search_results:
+                    for i, trial in enumerate(search_results[:min(10, len(search_results))], 1):
+                        response += f"{i}. **{trial.get('nct_id', 'Unknown')}**: {trial.get('trial_name', 'No name')}\n"
+                        response += f"   Phase: {trial.get('trial_phase', 'N/A')}, Status: {trial.get('trial_status', 'N/A')}\n\n"
+                
+                return response
+                
+        except Exception as e:
+            logger.error(f"Reasoning query failed: {str(e)}")
+            raise AnalysisError(f"Reasoning query failed: {str(e)}")
+
+    async def _compare_analysis(self, arguments: Dict[str, Any]) -> str:
+        """
+        AI-powered comparison of clinical trials using reasoning models
+        """
+        comparison_criteria = arguments["comparison_criteria"]
+        auto_find_similar = arguments.get("auto_find_similar", True)
+        analysis_depth = arguments.get("analysis_depth", "detailed")
+        
+        try:
+            # Select model based on analysis depth
+            model_name = "o3" if analysis_depth == "expert" else "o3-mini"
+            analyzer = await self._get_analyzer(model_name)
+            
+            # First, use reasoning to extract search filters
+            filters_prompt = f"""
+            You are an expert clinical trial analyst. Extract structured search filters from this comparison request:
+            
+            REQUEST: "{comparison_criteria}"
+            
+            Return a JSON object with filters that would find relevant trials for this comparison:
+            {{
+                "filters": {{
+                    "primary_drug": ["list", "of", "drug", "names"],
+                    "indication": ["list", "of", "diseases"],
+                    "trial_phase": ["PHASE1", "PHASE2", ...],
+                    "trial_status": ["RECRUITING", ...],
+                    "sponsor": ["list", "of", "sponsors"],
+                    "line_of_therapy": ["first line", ...],
+                    "biomarker": ["list", "of", "biomarkers"]
+                }}
+            }}
+            """
+            
+            # Get filter results
+            filter_response = analyzer.analyze_query(filters_prompt)
+            
+            try:
+                # Parse filters
+                filter_data = filter_response.dict()
+                filters = filter_data.get("filters", {})
+                
+                # Normalize filters
+                for k, v in filters.items():
+                    if v is None:
+                        filters[k] = []
+                    elif not isinstance(v, list):
+                        filters[k] = [v]
+                
+                # Search for trials
+                trials = self.db.search_trials(filters, 20)
+                
+                if not trials:
+                    return f"No trials found matching the criteria: {comparison_criteria}"
+                
+                # For detailed comparison, use reasoning model to analyze the trials
+                if len(trials) >= 2:
+                    # Prepare trial data for comparison
+                    trial_data = []
+                    for trial in trials[:10]:  # Limit to 10 trials for comparison
+                        trial_data.append({
+                            "nct_id": trial.get("nct_id", "Unknown"),
+                            "name": trial.get("trial_name", "No name"),
+                            "phase": trial.get("trial_phase", "N/A"),
+                            "status": trial.get("trial_status", "N/A"),
+                            "sponsor": trial.get("sponsor", "N/A"),
+                            "drug": trial.get("primary_drug", "N/A"),
+                            "indication": trial.get("indication", "N/A"),
+                            "enrollment": trial.get("patient_enrollment", "N/A"),
+                            "primary_endpoints": trial.get("primary_endpoints", "N/A"),
+                            "secondary_endpoints": trial.get("secondary_endpoints", "N/A")
+                        })
+                    
+                    # Create comparison prompt
+                    comparison_prompt = f"""
+                    You are an expert clinical trial analyst. Compare these clinical trials based on the following criteria:
+                    
+                    COMPARISON CRITERIA: "{comparison_criteria}"
+                    
+                    TRIALS TO COMPARE:
+                    {json.dumps(trial_data, indent=2)}
+                    
+                    ANALYSIS DEPTH: {analysis_depth}
+                    
+                    Perform a {analysis_depth} comparison focusing on:
+                    1. Key similarities and differences
+                    2. Strengths and weaknesses of each trial
+                    3. Methodological differences
+                    4. Patient population differences
+                    5. Endpoint differences
+                    6. Statistical considerations
+                    
+                    Return your analysis in markdown format with appropriate headings and bullet points.
+                    Include a summary table at the end comparing the key parameters across trials.
+                    """
+                    
+                    # Get comparison analysis
+                    comparison_result = analyzer.analyze_query(comparison_prompt)
+                    
+                    # Format the response
+                    response = f"# Clinical Trial Comparison Analysis\n\n"
+                    response += f"**Comparison Criteria:** {comparison_criteria}\n\n"
+                    response += f"**Analysis Depth:** {analysis_depth}\n\n"
+                    response += f"**Trials Compared:** {len(trial_data)}\n\n"
+                    response += f"**Model Used:** {model_name}\n\n"
+                    response += f"## Detailed Comparison\n\n"
+                    response += comparison_result.query_intent  # Use query_intent as the comparison text
+                    
+                    return response
+                else:
+                    # Not enough trials for comparison
+                    return f"Found only {len(trials)} trial(s) matching the criteria. At least 2 trials are needed for comparison."
+            
+            except json.JSONDecodeError:
+                # Handle non-JSON responses
+                logger.warning(f"Non-JSON response from reasoning model: {filter_response[:100]}...")
+                
+                # Fallback to basic comparison
+                trials = self.db.search_trials({}, 10)
+                
+                response = f"# Clinical Trial Comparison (Basic)\n\n"
+                response += f"**Comparison Criteria:** {comparison_criteria}\n\n"
+                response += f"**Found {len(trials)} trials for basic comparison**\n\n"
+                
+                # Create a simple comparison table
+                response += "## Trial Comparison Table\n\n"
+                response += "| NCT ID | Trial Name | Phase | Status | Sponsor |\n"
+                response += "|--------|------------|-------|--------|--------|\n"
+                
+                for trial in trials[:10]:
+                    response += f"| {trial.get('nct_id', 'Unknown')} | {trial.get('trial_name', 'No name')[:30]}... | "
+                    response += f"{trial.get('trial_phase', 'N/A')} | {trial.get('trial_status', 'N/A')} | "
+                    response += f"{trial.get('sponsor', 'N/A')} |\n"
+                
+                return response
+                
+        except Exception as e:
+            logger.error(f"Compare analysis failed: {str(e)}")
+            raise AnalysisError(f"Compare analysis failed: {str(e)}")
+
+    async def _trend_analysis(self, arguments: Dict[str, Any]) -> str:
+        """
+        Analyze trends and patterns in clinical trial data using reasoning models
+        """
+        trend_query = arguments["trend_query"]
+        time_period = arguments.get("time_period", "last 5 years")
+        group_by = arguments.get("group_by", "drug")
+        include_insights = arguments.get("include_insights", True)
+        
+        try:
+            # Select model based on grouping complexity
+            model_name = "o3" if group_by == "expert" else "o3-mini"
+            analyzer = await self._get_analyzer(model_name)
+            
+            # Get all trials for trend analysis
+            all_trials = self.db.search_trials({}, 1000)
+            
+            if not all_trials:
+                return "No trials found in the database for trend analysis."
+            
+            # Group trials based on the specified parameter
+            grouped_data = {}
+            
+            if group_by == "drug":
+                for trial in all_trials:
+                    drug = trial.get("primary_drug", "Unknown")
+                    if drug not in grouped_data:
+                        grouped_data[drug] = []
+                    grouped_data[drug].append(trial)
+            
+            elif group_by == "indication":
+                for trial in all_trials:
+                    indication = trial.get("indication", "Unknown")
+                    if indication not in grouped_data:
+                        grouped_data[indication] = []
+                    grouped_data[indication].append(trial)
+            
+            elif group_by == "phase":
+                for trial in all_trials:
+                    phase = trial.get("trial_phase", "Unknown")
+                    if phase not in grouped_data:
+                        grouped_data[phase] = []
+                    grouped_data[phase].append(trial)
+            
+            elif group_by == "sponsor":
+                for trial in all_trials:
+                    sponsor = trial.get("sponsor", "Unknown")
+                    if sponsor not in grouped_data:
+                        grouped_data[sponsor] = []
+                    grouped_data[sponsor].append(trial)
+            
+            else:  # expert grouping - use the model to determine the best grouping
+                # Prepare a simplified trial dataset for the model
+                simplified_trials = []
+                for trial in all_trials[:100]:  # Limit to 100 trials for performance
+                    simplified_trials.append({
+                        "nct_id": trial.get("nct_id", "Unknown"),
+                        "name": trial.get("trial_name", "No name"),
+                        "phase": trial.get("trial_phase", "N/A"),
+                        "status": trial.get("trial_status", "N/A"),
+                        "sponsor": trial.get("sponsor", "N/A"),
+                        "drug": trial.get("primary_drug", "N/A"),
+                        "indication": trial.get("indication", "N/A"),
+                        "enrollment": trial.get("patient_enrollment", "N/A")
+                    })
+                
+                # Create expert grouping prompt
+                expert_prompt = f"""
+                You are an expert clinical trial analyst. Analyze these trials and identify the most meaningful groupings based on this query:
+                
+                TREND QUERY: "{trend_query}"
+                TIME PERIOD: {time_period}
+                
+                TRIAL DATA:
+                {json.dumps(simplified_trials[:20], indent=2)}  # Send only first 20 for prompt size
+                
+                Based on the query, determine the most insightful way to group these trials. Then create a JSON response with:
+                1. The recommended grouping approach
+                2. The rationale for this grouping
+                3. Key trends observed across the dataset
+                4. Recommendations for further analysis
+                
+                Format your response as:
+                {{
+                    "recommended_grouping": "name of grouping parameter",
+                    "grouping_rationale": "explanation of why this grouping is insightful",
+                    "observed_trends": ["list", "of", "key", "trends"],
+                    "recommendations": ["list", "of", "recommendations"]
+                }}
+                """
+                
+                # Get expert grouping recommendation
+                expert_response = analyzer.analyze_query(expert_prompt)
+                
+                try:
+                    # Parse expert recommendation
+                    expert_data = expert_response.dict()
+                    recommended_grouping = expert_data.get("recommended_grouping", "drug")
+                    
+                    # Re-group based on recommendation
+                    for trial in all_trials:
+                        group_value = trial.get(recommended_grouping, "Unknown")
+                        if group_value not in grouped_data:
+                            grouped_data[group_value] = []
+                        grouped_data[group_value].append(trial)
+                    
+                    # Use the expert grouping for the response
+                    group_by = recommended_grouping
+                    
+                except json.JSONDecodeError:
+                    # Fallback to drug grouping if expert recommendation fails
+                    for trial in all_trials:
+                        drug = trial.get("primary_drug", "Unknown")
+                        if drug not in grouped_data:
+                            grouped_data[drug] = []
+                        grouped_data[drug].append(trial)
+            
+            # Generate trend analysis
+            if include_insights:
+                # Prepare data for trend analysis
+                trend_data = {
+                    "query": trend_query,
+                    "time_period": time_period,
+                    "group_by": group_by,
+                    "total_trials": len(all_trials),
+                    "groups": {}
+                }
+                
+                # Add summary data for each group
+                for group_name, trials in grouped_data.items():
+                    if group_name == "Unknown" or not group_name:
+                        continue
+                        
+                    trend_data["groups"][group_name] = {
+                        "trial_count": len(trials),
+                        "phases": {},
+                        "statuses": {},
+                        "avg_enrollment": sum(trial.get("patient_enrollment", 0) or 0 for trial in trials) / max(len(trials), 1)
+                    }
+                    
+                    # Count phases and statuses
+                    for trial in trials:
+                        phase = trial.get("trial_phase", "Unknown")
+                        status = trial.get("trial_status", "Unknown")
+                        
+                        if phase not in trend_data["groups"][group_name]["phases"]:
+                            trend_data["groups"][group_name]["phases"][phase] = 0
+                        trend_data["groups"][group_name]["phases"][phase] += 1
+                        
+                        if status not in trend_data["groups"][group_name]["statuses"]:
+                            trend_data["groups"][group_name]["statuses"][status] = 0
+                        trend_data["groups"][group_name]["statuses"][status] += 1
+                
+                # Create trend analysis prompt
+                trend_prompt = f"""
+                You are an expert clinical trial analyst. Analyze this trend data and provide insights:
+                
+                TREND QUERY: "{trend_query}"
+                TIME PERIOD: {time_period}
+                GROUPING BY: {group_by}
+                
+                TREND DATA:
+                {json.dumps(trend_data, indent=2)}
+                
+                Provide a comprehensive trend analysis in markdown format that includes:
+                1. Summary of key findings
+                2. Major trends observed
+                3. Comparative analysis across groups
+                4. Insights on trial phases and status distribution
+                5. Recommendations for further investigation
+                
+                Format your response with appropriate headings, bullet points, and emphasis.
+                """
+                
+                # Get trend analysis
+                trend_analysis = analyzer.analyze_query(trend_prompt)
+                
+                # Format the response
+                response = f"# Clinical Trial Trend Analysis\n\n"
+                response += f"**Trend Query:** {trend_query}\n\n"
+                response += f"**Time Period:** {time_period}\n\n"
+                response += f"**Grouped By:** {group_by}\n\n"
+                response += f"**Total Trials Analyzed:** {len(all_trials)}\n\n"
+                response += f"**Model Used:** {model_name}\n\n"
+                response += trend_analysis.query_intent  # Use query_intent for the analysis text
+                
+                return response
+            
+            else:
+                # Basic trend analysis without AI insights
+                response = f"# Clinical Trial Trend Analysis\n\n"
+                response += f"**Trend Query:** {trend_query}\n\n"
+                response += f"**Time Period:** {time_period}\n\n"
+                response += f"**Grouped By:** {group_by}\n\n"
+                response += f"**Total Trials Analyzed:** {len(all_trials)}\n\n"
+                
+                # Add group statistics
+                response += "## Group Statistics\n\n"
+                response += "| Group | Trial Count | Top Phase | Top Status |\n"
+                response += "|-------|------------|-----------|------------|\n"
+                
+                for group_name, trials in sorted(grouped_data.items(), key=lambda x: len(x[1]), reverse=True)[:10]:
+                    if group_name == "Unknown" or not group_name:
+                        continue
+                        
+                    # Count phases and statuses
+                    phases = {}
+                    statuses = {}
+                    for trial in trials:
+                        phase = trial.get("trial_phase", "Unknown")
+                        status = trial.get("trial_status", "Unknown")
+                        
+                        if phase not in phases:
+                            phases[phase] = 0
+                        phases[phase] += 1
+                        
+                        if status not in statuses:
+                            statuses[status] = 0
+                        statuses[status] += 1
+                    
+                    # Find top phase and status
+                    top_phase = max(phases.items(), key=lambda x: x[1])[0] if phases else "N/A"
+                    top_status = max(statuses.items(), key=lambda x: x[1])[0] if statuses else "N/A"
+                    
+                    response += f"| {group_name} | {len(trials)} | {top_phase} | {top_status} |\n"
+                
+                return response
+                
+        except Exception as e:
+            logger.error(f"Trend analysis failed: {str(e)}")
+            raise AnalysisError(f"Trend analysis failed: {str(e)}")
 
     async def _parse_natural_language_query(self, query: str) -> Dict[str, Any]:
         """Use advanced LLM reasoning to intelligently parse natural language query into structured search filters"""

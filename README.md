@@ -139,9 +139,11 @@ The system uses AI to understand complex queries:
 ### MCP Tools
 - `search_trials`: Intelligent trial search
 - `smart_search`: Natural language search
+- `reasoning_query`: Advanced semantic search using reasoning models
+- `compare_analysis`: AI-powered comparison of clinical trials
+- `trend_analysis`: Analyze trends and patterns in trial data
 - `get_trial_details`: Detailed trial information
 - `store_trial`: Add new trials to database
-- `reasoning_query`: Advanced reasoning analysis
 
 ## 📊 Database Schema
 

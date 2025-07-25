@@ -1,0 +1,42 @@
+{
+  "Basic drug query": {
+    "query": "Find trials using semaglutide",
+    "model": "o3-mini",
+    "result_length": 1430,
+    "result_preview": "## Semantic Analysis of: 'Find trials using semaglutide'\n\n**Query Intent:** The user is trying to find clinical trials that are utilizing semaglutide, which may include trials for various indications,"
+  },
+  "Complex indication query": {
+    "query": "What trials exist for metastatic triple-negative breast cancer?",
+    "model": "o3-mini",
+    "result_length": 1949,
+    "result_preview": "## Semantic Analysis of: 'What trials exist for metastatic triple-negative breast cancer?'\n\n**Query Intent:** The user is seeking information on clinical trials specifically targeting metastatic tripl"
+  },
+  "Combination therapy query": {
+    "query": "Find trials combining checkpoint inhibitors with chemotherapy for lung cancer",
+    "model": "o3-mini",
+    "result_length": 1705,
+    "result_preview": "## Semantic Analysis of: 'Find trials combining checkpoint inhibitors with chemotherapy for lung cancer'\n\n**Query Intent:** The user is trying to find clinical trials that investigate the combination "
+  },
+  "Biomarker query": {
+    "query": "Trials for EGFR-mutated non-small cell lung cancer",
+    "model": "o3-mini",
+    "result_length": 1892,
+    "result_preview": "## Semantic Analysis of: 'Trials for EGFR-mutated non-small cell lung cancer'\n\n**Query Intent:** The user is trying to find clinical trials specifically targeting patients with EGFR-mutated non-small "
+  },
+  "Complex comparative query": {
+    "query": "Compare the efficacy endpoints in trials of PARP inhibitors for ovarian cancer",
+    "model": "o3",
+    "result_length": 320,
+    "result_preview": "## Semantic Analysis of: 'Compare the efficacy endpoints in trials of PARP inhibitors for ovarian cancer'\n\n**Query Intent:** General clinical trial query\n\n**Search Strategy:** Standard search\n\n**Confi"
+  },
+  "Comparison Analysis": {
+    "criteria": "Compare Phase 3 trials for metastatic breast cancer",
+    "result_length": 90,
+    "result_preview": "No trials found matching the criteria: Compare Phase 3 trials for metastatic breast cancer"
+  },
+  "Trend Analysis": {
+    "query": "Analyze trends in immunotherapy trials for solid tumors",
+    "result_length": 277,
+    "result_preview": "# Clinical Trial Trend Analysis\n\n**Trend Query:** Analyze trends in immunotherapy trials for solid tumors\n\n**Time Period:** last 5 years\n\n**Grouped By:** indication\n\n**Total Trials Analyzed:** 26\n\n**M"
+  }
+}

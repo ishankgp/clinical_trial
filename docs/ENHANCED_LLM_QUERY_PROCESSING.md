@@ -52,125 +52,135 @@ The enhanced system understands:
 - **Sponsor Types**: industry, academic, government
 - **Geographic Preferences**: US, Europe, Asia, global
 - **Patient Population**: adults, children, specific age groups
-- **Treatment Lines**: first line, second line, etc.
-- **Enrollment Size**: large trials, small trials, specific numbers
-- **Time Periods**: recent trials, ongoing trials, completed trials
 
-### 3. **Structured Output Format**
+### 3. **Advanced Semantic Search with Reasoning Models**
 
-The LLM returns structured JSON with:
+The system now includes three levels of search sophistication:
 
-```json
-{
-    "filters": {
-        "primary_drug": "extracted drug name or null",
-        "indication": "extracted disease/indication or null",
-        "trial_phase": "PHASE1/PHASE2/PHASE3/PHASE4 or null",
-        "trial_status": "RECRUITING/COMPLETED/etc or null",
-        "sponsor": "extracted sponsor name or null",
-        "line_of_therapy": "extracted therapy line or null",
-        "biomarker": "extracted biomarker terms or null",
-        "enrollment_min": number or null,
-        "enrollment_max": number or null,
-        "geography": "extracted geography or null"
-    },
-    "query_intent": "Brief description of what the user is looking for",
-    "search_strategy": "How to approach this search",
-    "confidence_score": 0.0-1.0
-}
+1. **Basic Search**: Simple keyword matching in the database
+2. **Smart Search**: LLM-enhanced query understanding with structured filters
+3. **Reasoning Query**: Advanced semantic analysis using reasoning models (o3, o3-mini)
+
+The reasoning query capability provides:
+- Deep semantic understanding of complex queries
+- Extraction of implicit relationships and concepts
+- Comprehensive analysis of search intent
+- Suggested follow-up queries
+- Detailed explanations of search strategies
+
+Example reasoning query:
+```python
+result = await server._reasoning_query({
+    "query": "Compare Phase 3 trials for metastatic bladder cancer using different checkpoint inhibitors",
+    "reasoning_model": "o3",
+    "include_analysis": True,
+    "format": "detailed"
+})
 ```
 
-### 4. **Enhanced Fallback Processing**
+### 4. **AI-Powered Trial Comparison**
 
-When LLM processing fails, the system uses sophisticated string processing:
+New comparison capabilities allow for:
+- Comparing multiple trials based on natural language criteria
+- Identifying key similarities and differences
+- Analyzing methodological differences
+- Evaluating patient populations across trials
+- Comparing endpoints and outcomes
 
-- **Pattern Matching**: 50+ disease patterns, 30+ drug patterns
-- **Regex Extraction**: Numeric values, NCT IDs, enrollment numbers
-- **Context Understanding**: "large trials" → enrollment_min: 100
-- **Synonym Recognition**: "ozempic" → "semaglutide", "keytruda" → "pembrolizumab"
-
-### 5. **Confidence Scoring**
-
-The system provides confidence scores to help users understand query quality:
-
-- **High Confidence (0.7-1.0)**: Clear, well-structured queries
-- **Medium Confidence (0.5-0.7)**: Ambiguous or complex queries
-- **Low Confidence (0.0-0.5)**: Unclear or incomplete queries
-
-## Example Queries and Results
-
-### Complex Multi-Criteria Query
-**Input:** "Find Phase 3 trials for metastatic bladder cancer using checkpoint inhibitors"
-
-**LLM Output:**
-```json
-{
-    "filters": {
-        "indication": "metastatic bladder cancer",
-        "trial_phase": "PHASE3",
-        "primary_drug": "checkpoint inhibitors"
-    },
-    "query_intent": "User wants Phase 3 clinical trials for metastatic bladder cancer that use checkpoint inhibitors",
-    "confidence_score": 0.95
-}
+Example comparison:
+```python
+result = await server._compare_analysis({
+    "comparison_criteria": "Compare checkpoint inhibitor trials in bladder cancer",
+    "auto_find_similar": True,
+    "analysis_depth": "expert"
+})
 ```
 
-### Geographic and Status Query
-**Input:** "Show me recruiting diabetes trials with semaglutide in the US"
+### 5. **Trend Analysis with AI Insights**
 
-**LLM Output:**
-```json
-{
-    "filters": {
-        "indication": "diabetes",
-        "primary_drug": "semaglutide",
-        "trial_status": "RECRUITING",
-        "geography": "US"
-    },
-    "query_intent": "User wants currently recruiting diabetes trials using semaglutide in the United States",
-    "confidence_score": 0.92
-}
+The system can now analyze trends across trials:
+- Identify patterns in trial design and outcomes
+- Group trials by meaningful parameters
+- Generate insights about evolving research focus
+- Provide recommendations for further investigation
+
+Example trend analysis:
+```python
+result = await server._trend_analysis({
+    "trend_query": "Analyze trends in checkpoint inhibitor trials for bladder cancer",
+    "time_period": "last 5 years",
+    "group_by": "drug",
+    "include_insights": True
+})
 ```
 
-## Benefits
+## Implementation Details
 
-### 1. **Improved Accuracy**
-- LLM reasoning understands context and intent
-- Better handling of complex, multi-part queries
-- Reduced false positives and negatives
+### Enhanced Prompting Strategy
 
-### 2. **Enhanced User Experience**
-- Natural language queries work more reliably
-- Better search results with higher relevance
-- Clear feedback on query understanding
+The system uses carefully designed prompts that:
+- Provide detailed context about clinical trials
+- Include database schema information
+- Specify expected output formats
+- Give examples of correct responses
+- Encourage extraction of synonyms and related terms
 
-### 3. **Robust Fallback**
-- System works even when LLM is unavailable
-- Sophisticated string processing as backup
-- Graceful degradation of functionality
+### Multi-Model Approach
 
-## Testing
+Different models are used based on query complexity:
+- **o3-mini**: Default for most queries (balance of speed and accuracy)
+- **o3**: Used for expert-level analysis and complex comparisons
 
-Run the enhanced query processing test:
+### Document Attachment
 
-```bash
-python tests/test_enhanced_query_processing.py
+For complex queries, the system can attach the clinical trial analysis document to provide additional context to the model:
+
+```python
+def _analyze_query_with_document_attachment(self, query: str, model: str) -> Dict[str, Any]:
+    """Analyze query using o3 model with document attachment for enhanced understanding"""
+    # Upload document and create API call with attachment
+    file_id = self._upload_document(doc_content, "clinical_trial_analysis_specs.md")
+    response = self.openai_client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": analysis_prompt},
+                    {"type": "file", "file_id": file_id}
+                ]
+            }
+        ],
+        response_format={"type": "json_object"}
+    )
 ```
 
-This test validates:
-- LLM-based query parsing accuracy
-- Fallback processing reliability
-- Confidence scoring accuracy
-- Filter extraction completeness
+### Robust Fallback Mechanisms
 
-## Configuration
+The system includes multiple fallback strategies:
+- JSON parsing error handling
+- Basic search when LLM is unavailable
+- Pattern matching for common query types
+- Default filters when extraction fails
 
-### Required Environment Variables
-```bash
-OPENAI_API_KEY=your-openai-api-key
+## Usage Examples
+
+### Basic Smart Search
+```
+Query: "Find diabetes trials with semaglutide"
 ```
 
-### Model Selection
-- **Default**: `o4-mini` (fast reasoning model)
-- **High Accuracy**: `gpt-4o` (most powerful reasoning model)
-- **Fallback**: `gpt-4o-mini` (standard model) 
+### Advanced Reasoning Query
+```
+Query: "What are the key differences between pembrolizumab and nivolumab trials in advanced NSCLC with PD-L1 expression?"
+```
+
+### Comparative Analysis
+```
+Query: "Compare the efficacy endpoints in Phase 3 trials of PARP inhibitors for ovarian cancer maintenance therapy"
+```
+
+### Trend Analysis
+```
+Query: "How have inclusion criteria for Alzheimer's disease trials evolved over the past decade?"
+``` 

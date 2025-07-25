@@ -143,11 +143,13 @@ class AnalysisResult(BaseModel):
 
 class QueryAnalysisResult(BaseModel):
     """Structured result of query analysis"""
-    filters: Dict[str, Optional[str]] = Field(default_factory=dict)
+    filters: Dict[str, Union[Optional[str], List[str]]] = Field(default_factory=dict)
     query_intent: str
     search_strategy: str
     relevant_fields: List[str]
     confidence_score: float
+    semantic_analysis: Optional[str] = None
+    suggested_follow_ups: Optional[List[str]] = None
 
 class ClinicalTrialAnalyzerReasoning(BaseAnalyzer):
     """
