@@ -1,0 +1,41 @@
+{
+  "name": "clinical_trial",
+  "version": "1.0.0",
+  "description": "A comprehensive AI-powered system for analyzing clinical trials using OpenAI's reasoning models and Model Context Protocol (MCP).",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node mcp-postgres/test.js",
+    "test-connection": "node mcp-postgres/test_connection.js",
+    "pg-test": "node mcp-postgres/pg-test.js",
+    "mock-mcp": "node mcp-postgres/mock-mcp-server.js",
+    "dev": "nodemon mcp-postgres/server.js",
+    "start": "node mcp-postgres/server.js",
+    "bootstrap-db": "bash mcp-postgres/bootstrap_db.sh",
+    "pg-mcp": "node mcp-postgres/server.js",
+    "simple-pg-mcp": "node mcp-postgres/simple-server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ishankgp/clinical_trial.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ishankgp/clinical_trial/issues"
+  },
+  "homepage": "https://github.com/ishankgp/clinical_trial#readme",
+  "dependencies": {
+    "@modelcontextprotocol/server-postgres": "^0.6.2",
+    "dotenv": "^16.4.1",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}

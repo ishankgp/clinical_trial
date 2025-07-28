@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "clinical-trials-pg": {
+      "command": "npm",
+      "args": ["run", "pg-mcp"],
+      "cwd": ".",
+      "env": {
+        "DATABASE_URL": "postgresql://username:password@localhost:5432/clinical_trials",
+        "PGUSER": "username",
+        "PGPASSWORD": "password",
+        "PGDATABASE": "clinical_trials",
+        "PGHOST": "localhost",
+        "PGPORT": "5432",
+        "MCP_SERVER_PORT": "5050",
+        "MCP_READ_ONLY": "true",
+        "MCP_STATEMENT_TIMEOUT": "30000",
+        "MCP_ROW_LIMIT": "1000",
+        "MCP_VECTOR_SEARCH_ENABLED": "true"
+      }
+    }
+  }
+} 
