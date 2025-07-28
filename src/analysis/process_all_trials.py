@@ -19,7 +19,7 @@ from .clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
 from .clinical_trial_analyzer_llm import ClinicalTrialAnalyzerLLM
 
 # Load environment variables
-load_dotenv()
+load_dotenv(encoding='utf-8-sig')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -56,7 +56,7 @@ def main():
         from test_mcp_reasoning_query import main as test_mcp_query
         asyncio.run(test_mcp_query())
     elif command == "test-mcp-chat":
-        from test_mcp_chat_reasoning import main as test_mcp_chat
+        from tests.test_mcp_chat_reasoning import main as test_mcp_chat
         test_mcp_chat()
     elif command == "test-o3-doc":
         from test_o3_document_attachment import main as test_o3_doc

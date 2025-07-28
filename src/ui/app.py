@@ -40,7 +40,7 @@ except ImportError as e:
     print(f"MCP Chat module not available: {e}")
 
 # Load environment variables
-load_dotenv()
+load_dotenv(encoding='utf-8-sig')
 
 # Page configuration
 st.set_page_config(
@@ -1061,13 +1061,22 @@ def main():
             with col2:
                 # Check database status
                 try:
-                    # Import database using absolute import
-                    from src.database.clinical_trial_database import ClinicalTrialDatabase
-                    db = ClinicalTrialDatabase()
-                    trials = db.search_trials({}, 1)
-                    st.success(f"✅ Database: {len(trials)}+ trials")
-                except:
-                    st.warning("⚠️ Database: Check connection")
+                    # Prioritize Supabase if configured
+                    supabase_url = os.getenv("SUPABASE_URL")
+                    supabase_key = os.getenv("SUPABASE_KEY")
+                    
+                    if supabase_url and supabase_key:
+                        from src.database.clinical_trial_database_supabase import ClinicalTrialDatabaseSupabase
+                        db = ClinicalTrialDatabaseSupabase(supabase_url, supabase_key)
+                        trials = db.search_trials("", {}, 1)
+                        st.success(f"✅ Supabase DB: {len(trials)}+ trials")
+                    else:
+                        from src.database.clinical_trial_database import ClinicalTrialDatabase
+                        db = ClinicalTrialDatabase()
+                        trials = db.search_trials({}, 1)
+                        st.success(f"✅ SQLite DB: {len(trials)}+ trials")
+                except Exception as e:
+                    st.warning(f"⚠️ Database: Check connection - {str(e)}")
             
             with col3:
                 # Check API key
@@ -1239,16 +1248,26 @@ def main():
             with col1:
                 # Main database status
                 try:
-                    # Import database using dynamic path resolution
-                    database_path = os.path.join(os.path.dirname(__file__), '..', 'database')
-                    if database_path not in sys.path:
-                        sys.path.append(database_path)
-                    from clinical_trial_database import ClinicalTrialDatabase
-                    db = ClinicalTrialDatabase()
-                    trials = db.search_trials({}, 1)
-                    st.success(f"✅ Main DB: {len(trials)}+ trials")
-                except:
-                    st.warning("⚠️ Main DB: Check connection")
+                    # Prioritize Supabase if configured
+                    supabase_url = os.getenv("SUPABASE_URL")
+                    supabase_key = os.getenv("SUPABASE_KEY")
+                    
+                    if supabase_url and supabase_key:
+                        from src.database.clinical_trial_database_supabase import ClinicalTrialDatabaseSupabase
+                        db = ClinicalTrialDatabaseSupabase(supabase_url, supabase_key)
+                        trials = db.search_trials("", {}, 1)
+                        st.success(f"✅ Supabase DB: {len(trials)}+ trials")
+                    else:
+                        # Import database using dynamic path resolution
+                        database_path = os.path.join(os.path.dirname(__file__), '..', 'database')
+                        if database_path not in sys.path:
+                            sys.path.append(database_path)
+                        from clinical_trial_database import ClinicalTrialDatabase
+                        db = ClinicalTrialDatabase()
+                        trials = db.search_trials({}, 1)
+                        st.success(f"✅ SQLite DB: {len(trials)}+ trials")
+                except Exception as e:
+                    st.warning(f"⚠️ Main DB: Check connection - {str(e)}")
             
             with col2:
                 # Results database status

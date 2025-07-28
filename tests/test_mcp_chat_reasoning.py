@@ -6,17 +6,18 @@ Test the chat interface with o3-mini reasoning model
 
 import os
 import sys
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Add the repository root src directory to the import path
-src_dir = Path(__file__).resolve().parents[1] / "src"
-sys.path.insert(0, str(src_dir))
+# Add project root to Python path
+project_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project_root))
 
-from mcp.clinical_trial_chat_mcp import ClinicalTrialChatMCP
+from src.mcp.clinical_trial_chat_mcp import ClinicalTrialChatMCP
 
 
 def test_mcp_chat_reasoning():
@@ -34,7 +35,7 @@ def test_mcp_chat_reasoning():
     try:
         # Initialize chat interface with o3-mini
         print("1. Initializing MCP chat with o3-mini...")
-        chat = ClinicalTrialChatMCP(api_key, model="o3-mini")
+        chat = ClinicalTrialChatMCP(api_key, model="o3-mini") # Use Supabase
         print("✅ MCP chat initialized successfully")
 
         # Test complex reasoning query
@@ -108,7 +109,7 @@ def test_different_models():
     for model in models:
         try:
             print(f"\nTesting {model}...")
-            chat = ClinicalTrialChatMCP(api_key, model=model)
+            chat = ClinicalTrialChatMCP(api_key, model=model) # Use Supabase
 
             response = chat.chat(test_query)
             print(f"✅ {model}: {len(response)} characters")

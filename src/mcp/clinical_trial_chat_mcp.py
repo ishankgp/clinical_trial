@@ -26,10 +26,15 @@ if str(project_root) not in sys.path:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Import database classes
+from src.database.clinical_trial_database import ClinicalTrialDatabase
+from src.database.clinical_trial_database_supabase import ClinicalTrialDatabaseSupabase
+
+
 class ClinicalTrialChatMCP:
     """Chat interface for clinical trial queries using OpenAI LLM and MCP tools"""
     
-    def __init__(self, openai_api_key: str, model: str = "o3"):
+    def __init__(self, openai_api_key: str, model: str = "o3", db_path: str = "clinical_trials.db"):
         """Initialize the chat interface with o3 reasoning model by default"""
         self.openai_api_key = openai_api_key
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
@@ -41,14 +46,30 @@ class ClinicalTrialChatMCP:
         # Load the clinical trial analysis document for attachment
         self._load_analysis_document()
         
-        # Initialize MCP server
+        # Initialize database connection
+        self.db = None
+        
+        # Prioritize Supabase if configured
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+
+        if supabase_url and supabase_key:
+            try:
+                self.db = ClinicalTrialDatabaseSupabase(supabase_url, supabase_key)
+                logger.info("✅ Successfully connected to Supabase")
+            except Exception as e:
+                logger.error(f"⚠️ Supabase connection failed, falling back to SQLite: {e}")
+                self.db = ClinicalTrialDatabase(db_path)
+        else:
+            self.db = ClinicalTrialDatabase(db_path)
+        
+        # Initialize MCP server and tools
         self._start_mcp_server()
         self._load_mcp_tools()
     
     def _load_analysis_document(self):
         """Load the clinical trial analysis specification document"""
         try:
-            # Use absolute path with os.path.abspath to ensure correct path resolution
             project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
             doc_path = os.path.join(project_root, 'docs', 'GenAI_Case_Clinical_Trial_Analysis_PROMPT_ver1.00.docx.md')
             if os.path.exists(doc_path):
@@ -65,7 +86,6 @@ class ClinicalTrialChatMCP:
     def _start_mcp_server(self):
         """Start the MCP server process"""
         try:
-            # Start the MCP server as a subprocess
             server_path = os.path.join(os.path.dirname(__file__), "clinical_trial_mcp_server.py")
             self.mcp_process = subprocess.Popen(
                 ["python", server_path],
@@ -138,8 +158,7 @@ class ClinicalTrialChatMCP:
                                     "enrollment_max": {"type": "integer"}
                                 }
                             },
-                            "limit": {"type": "integer", "default": 50},
-                            "format": {"type": "string", "enum": ["table", "json", "summary"], "default": "table"}
+                            "limit": {"type": "integer", "default": 50}
                         }
                     }
                 }
@@ -308,32 +327,17 @@ class ClinicalTrialChatMCP:
     def _call_mcp_function(self, function_name: str, arguments: Dict[str, Any]) -> str:
         """Call MCP function and return result"""
         try:
-            # Import database using proper import path
-            import sys
-            from pathlib import Path
-            
-            # Ensure project root is in path
-            project_root = Path(__file__).resolve().parents[2]
-            if str(project_root) not in sys.path:
-                sys.path.insert(0, str(project_root))
-                
-            from src.database.clinical_trial_database import ClinicalTrialDatabase
-            
-            db = ClinicalTrialDatabase()
-            
-            if function_name == "store_trial":
-                nct_id = arguments.get("nct_id")
-                model = arguments.get("analyze_with_model", "gpt-4o-mini")
-                # This would trigger actual analysis, but for now return status
-                return f"✅ Successfully stored trial {nct_id} using {model} model"
-            
-            elif function_name == "search_trials":
+            if function_name == "search_trials":
                 query = arguments.get("query", "")
                 filters = arguments.get("filters", {})
                 limit = arguments.get("limit", 50)
                 
-                # Perform actual search
-                results = db.search_trials(filters, limit)
+                # Ensure filters is a dictionary, not an integer
+                if not isinstance(filters, dict):
+                    filters = {}
+                
+                # Use the database's search method
+                results = self.db.search_trials(query, filters, limit)
                 if results:
                     return f"🔍 Found {len(results)} trials matching: {query}\n\n" + \
                            "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}" 
@@ -343,9 +347,7 @@ class ClinicalTrialChatMCP:
             
             elif function_name == "get_trial_details":
                 nct_id = arguments.get("nct_id")
-                
-                # Get actual trial details from database
-                trial_data = db.get_trial_by_nct_id(nct_id)
+                trial_data = self.db.get_trial_by_nct_id(nct_id)
                 if trial_data:
                     details = []
                     details.append(f"📋 **Trial Details for {nct_id}**")
@@ -354,363 +356,41 @@ class ClinicalTrialChatMCP:
                     details.append(f"**Status:** {trial_data.get('trial_status', 'N/A')}")
                     details.append(f"**Sponsor:** {trial_data.get('sponsor', 'N/A')}")
                     details.append(f"**Enrollment:** {trial_data.get('patient_enrollment', 'N/A')}")
-                    details.append(f"**Start Date:** {trial_data.get('start_date', 'N/A')}")
-                    details.append(f"**Completion Date:** {trial_data.get('primary_completion_date', 'N/A')}")
-                    details.append(f"**Developer:** {trial_data.get('developer', 'N/A')}")
-                    details.append(f"**Sponsor Type:** {trial_data.get('sponsor_type', 'N/A')}")
-                    
                     return "\n".join(details)
                 else:
                     return f"❌ Trial {nct_id} not found in database"
             
-            elif function_name == "compare_trials":
-                nct_ids = arguments.get("nct_ids", [])
-                if len(nct_ids) < 2:
-                    return "❌ Need at least 2 trials to compare"
-                
-                comparison_data = []
-                for nct_id in nct_ids:
-                    trial_data = db.get_trial_by_nct_id(nct_id)
-                    if trial_data:
-                        comparison_data.append({
-                            'nct_id': nct_id,
-                            'name': trial_data.get('trial_name', 'N/A'),
-                            'phase': trial_data.get('trial_phase', 'N/A'),
-                            'status': trial_data.get('trial_status', 'N/A'),
-                            'sponsor': trial_data.get('sponsor', 'N/A'),
-                            'enrollment': trial_data.get('patient_enrollment', 'N/A')
-                        })
-                
-                if comparison_data:
-                    result = "📊 **Trial Comparison**\n\n"
-                    for trial in comparison_data:
-                        result += f"**{trial['nct_id']}**\n"
-                        result += f"  • Name: {trial['name']}\n"
-                        result += f"  • Phase: {trial['phase']}\n"
-                        result += f"  • Status: {trial['status']}\n"
-                        result += f"  • Sponsor: {trial['sponsor']}\n"
-                        result += f"  • Enrollment: {trial['enrollment']}\n\n"
-                    return result
-                else:
-                    return "❌ No trial data found for comparison"
-            
-            elif function_name == "get_trial_statistics":
-                group_by = arguments.get("group_by", "phase")
-                
-                # Get all trials for statistics
-                all_trials = db.search_trials({}, 1000)
-                if not all_trials:
-                    return "❌ No trials found for statistics"
-                
-                # Group by the specified field
-                stats = {}
-                for trial in all_trials:
-                    key = trial.get(group_by, 'Unknown')
-                    if key not in stats:
-                        stats[key] = 0
-                    stats[key] += 1
-                
-                result = f"📈 **Statistics grouped by {group_by}**\n\n"
-                for key, count in sorted(stats.items()):
-                    result += f"• **{key}**: {count} trials\n"
-                
-                return result
-            
-            elif function_name == "smart_search":
-                query = arguments.get("query", "")
-                
-                # Use enhanced LLM-based query processing
-                try:
-                    # Ensure project root is in path
-                    project_root = Path(__file__).resolve().parents[2]
-                    if str(project_root) not in sys.path:
-                        sys.path.insert(0, str(project_root))
-                        
-                    # Import the reasoning analyzer for advanced query processing
-                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-                    
-                    # Get API key for the analyzer
-                    api_key = os.getenv("OPENAI_API_KEY")
-                    if not api_key:
-                        return "❌ OpenAI API key not available for advanced query processing"
-                    
-                    # Use reasoning model for query analysis
-                    analyzer = ClinicalTrialAnalyzerReasoning(api_key, model="o3-mini")
-                    analysis_result = analyzer.analyze_query(query)
-                    
-                    # Extract filters from the analysis
-                    filters = analysis_result.filters  # Access as attribute, not dictionary
-                    query_intent = analysis_result.query_intent
-                    confidence = analysis_result.confidence_score
-                    
-                    # Perform search with extracted filters
-                    results = db.search_trials(filters, 20)
-                    
-                    if results:
-                        response = f"🧠 **Smart Search Results** (Confidence: {confidence:.2f})\n\n"
-                        response += f"**Query:** {query}\n"
-                        response += f"**Intent:** {query_intent}\n\n"
-                        response += f"**Found {len(results)} trials:**\n\n"
-                        
-                        for trial in results[:10]:
-                            response += f"• **{trial.get('nct_id', 'Unknown')}**: {trial.get('trial_name', 'No name')}\n"
-                            response += f"  Phase: {trial.get('trial_phase', 'N/A')}, Status: {trial.get('trial_status', 'N/A')}\n"
-                            if trial.get('primary_drug'):
-                                response += f"  Drug: {trial.get('primary_drug', 'N/A')}\n"
-                            response += "\n"
-                        
-                        if len(results) > 10:
-                            response += f"... and {len(results) - 10} more trials\n\n"
-                        
-                        response += f"**Search Filters Applied:** {list(filters.keys()) if filters else 'None'}"
-                        
-                        return response
-                    else:
-                        return f"🧠 **Smart Search Results**\n\n**Query:** {query}\n**Intent:** {query_intent}\n\n❌ No trials found matching the criteria.\n\n**Suggestions:**\n• Try broadening your search terms\n• Check spelling of drug or disease names\n• Consider different trial phases or statuses"
-                        
-                except Exception as e:
-                    # Fallback to basic search if LLM processing fails
-                    logger.warning(f"LLM smart search failed, falling back to basic search: {e}")
-                    
-                    # Basic pattern matching for common queries
-                    if "sponsor" in query.lower():
-                        import re
-                        nct_pattern = r'NCT\d+'
-                        nct_match = re.search(nct_pattern, query)
-                        
-                        if nct_match:
-                            nct_id = nct_match.group()
-                            trial_data = db.get_trial_by_nct_id(nct_id)
-                            if trial_data:
-                                sponsor = trial_data.get('sponsor', 'N/A')
-                                return f"🏥 **Sponsor Information**\n\n**Trial:** {nct_id}\n**Sponsor:** {sponsor}\n\n**Additional Details:**\n• Name: {trial_data.get('trial_name', 'N/A')}\n• Phase: {trial_data.get('trial_phase', 'N/A')}\n• Status: {trial_data.get('trial_status', 'N/A')}"
-                            else:
-                                return f"❌ Trial {nct_id} not found in database"
-                        else:
-                            return "❌ Please provide an NCT ID to find sponsor information"
-                    
-                    # Generic fallback search
-                    results = db.search_trials({}, 10)
-                    if results:
-                        return f"🧠 **Basic Search Results for: {query}**\n\n" + \
-                               "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}" 
-                                         for trial in results[:5]])
-                    else:
-                        return f"🧠 No results found for: {query}"
-            
             elif function_name == "get_trials_by_drug":
                 drug_name = arguments.get("drug_name", "")
-                
-                # Search trials by drug (using trial_name as proxy since we don't have drug field)
-                all_trials = db.search_trials({}, 1000)
-                matching_trials = []
-                for trial in all_trials:
-                    if drug_name.lower() in trial.get('trial_name', '').lower():
-                        matching_trials.append(trial)
-                
-                if matching_trials:
-                    return f"💊 **Trials mentioning '{drug_name}'**\n\n" + \
+                limit = arguments.get("limit", 20)
+                results = self.db.get_trials_by_drug(drug_name, limit)
+                if results:
+                    return f"💊 **Trials for '{drug_name}'**\n\n" + \
                            "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')} (Phase: {trial.get('trial_phase', 'N/A')})" 
-                                     for trial in matching_trials[:10]])
+                                     for trial in results[:10]])
                 else:
-                    return f"💊 No trials found mentioning '{drug_name}'"
+                    return f"💊 No trials found for '{drug_name}'"
             
             elif function_name == "get_trials_by_indication":
                 indication = arguments.get("indication", "")
-                
-                # Search trials by indication (using trial_name as proxy since we don't have indication field)
-                all_trials = db.search_trials({}, 1000)
-                matching_trials = []
-                for trial in all_trials:
-                    if indication.lower() in trial.get('trial_name', '').lower():
-                        matching_trials.append(trial)
-                
-                if matching_trials:
-                    return f"🏥 **Trials mentioning '{indication}'**\n\n" + \
-                           "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')} (Phase: {trial.get('trial_phase', 'N/A')})" 
-                                     for trial in matching_trials[:10]])
-                else:
-                    return f"🏥 No trials found mentioning '{indication}'"
-            
-            elif function_name == "export_trials":
-                format_type = arguments.get("format", "csv")
-                
-                # Get all trials for export
-                all_trials = db.search_trials({}, 1000)
-                if all_trials:
-                    return f"📤 **Export Summary**\n\nExported {len(all_trials)} trials in {format_type.upper()} format.\n\n**Sample data:**\n" + \
-                           "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}" 
-                                     for trial in all_trials[:5]])
-                else:
-                    return "❌ No trials found for export"
-            
-            elif function_name == "reasoning_query":
-                query = arguments.get("query", "")
-                reasoning_model = arguments.get("reasoning_model", "o3")
-                include_analysis = arguments.get("include_analysis", True)
                 limit = arguments.get("limit", 20)
-                format_type = arguments.get("format", "detailed")
-                
-                # Use the reasoning analyzer with document attachment for o3 models
-                try:
-                    # Ensure project root is in path
-                    project_root = Path(__file__).resolve().parents[2]
-                    if str(project_root) not in sys.path:
-                        sys.path.insert(0, str(project_root))
-                        
-                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=reasoning_model)
-                    
-                    # Enhanced query analysis with document attachment for o3 models
-                    if reasoning_model in ["o3", "o3-mini"]:
-                        analysis_result = self._analyze_query_with_document_attachment(query, reasoning_model)
-                    else:
-                        analysis_result = analyzer.analyze_query(query)
-                    
-                    # Search for trials based on extracted filters
-                    filters = analysis_result.filters
-                    results = db.search_trials(filters, limit)
-                    
-                    # Format the response
-                    response = f"🧠 **Advanced Reasoning Query Analysis** (using {reasoning_model})\n\n"
-                    response += f"**Query:** {query}\n\n"
-                    response += f"**Intent:** {analysis_result.query_intent}\n\n"
-                    response += f"**Confidence:** {analysis_result.confidence_score}\n\n"
-                    response += f"**Search Strategy:** {analysis_result.search_strategy}\n\n"
-                    
-                    if results:
-                        response += f"**Found {len(results)} trials:**\n\n"
-                        for trial in results[:10]:
-                            response += f"• **{trial.get('nct_id', 'Unknown')}**: {trial.get('trial_name', 'No name')}\n"
-                            response += f"  Phase: {trial.get('trial_phase', 'N/A')}, Status: {trial.get('trial_status', 'N/A')}\n\n"
-                    else:
-                        response += "**No trials found matching the criteria.**\n\n"
-                    
-                    if include_analysis:
-                        response += "**AI Analysis:** The reasoning model with document attachment successfully interpreted your complex query and extracted relevant filters for clinical trial analysis.\n\n"
-                    
-                    return response
-                    
-                except Exception as e:
-                    return f"❌ Error in reasoning query: {str(e)}"
+                results = self.db.get_trials_by_indication(indication, limit)
+                if results:
+                    return f"🏥 **Trials for '{indication}'**\n\n" + \
+                           "\n".join([f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')} (Phase: {trial.get('trial_phase', 'N/A')})" 
+                                     for trial in results[:10]])
+                else:
+                    return f"🏥 No trials found for '{indication}'"
             
-            elif function_name == "compare_analysis":
-                comparison_criteria = arguments.get("comparison_criteria", "")
-                auto_find_similar = arguments.get("auto_find_similar", True)
-                analysis_depth = arguments.get("analysis_depth", "detailed")
-                
-                # Use reasoning model for comparison analysis
-                try:
-                    # Ensure project root is in path
-                    project_root = Path(__file__).resolve().parents[2]
-                    if str(project_root) not in sys.path:
-                        sys.path.insert(0, str(project_root))
-                        
-                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-                    model = "o3" if analysis_depth == "expert" else "o3-mini"
-                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
-                    
-                    # Analyze the comparison criteria
-                    analysis_result = analyzer.analyze_query(comparison_criteria)
-                    
-                    # Find trials for comparison
-                    filters = analysis_result.filters
-                    results = db.search_trials(filters, 20)
-                    
-                    response = f"🔍 **AI-Powered Comparison Analysis** (using {model})\n\n"
-                    response += f"**Comparison Criteria:** {comparison_criteria}\n\n"
-                    response += f"**Analysis Depth:** {analysis_depth}\n\n"
-                    response += f"**Query Intent:** {analysis_result.query_intent}\n\n"
-                    
-                    if results:
-                        response += f"**Trials for Comparison ({len(results)} found):**\n\n"
-                        for i, trial in enumerate(results[:10], 1):
-                            response += f"{i}. **{trial.get('nct_id', 'Unknown')}**: {trial.get('trial_name', 'No name')}\n"
-                            response += f"   Phase: {trial.get('trial_phase', 'N/A')}, Status: {trial.get('trial_status', 'N/A')}\n"
-                            response += f"   Sponsor: {trial.get('sponsor', 'N/A')}\n\n"
-                        
-                        if analysis_depth in ["detailed", "expert"]:
-                            response += "**Comparative Analysis:**\n"
-                            response += "• Trials are grouped by similar characteristics for effective comparison\n"
-                            response += "• Key differences in trial design, endpoints, and patient populations identified\n"
-                            response += "• Recommendations for further analysis provided\n\n"
-                    else:
-                        response += "**No trials found for comparison.**\n\n"
-                    
-                    return response
-                    
-                except Exception as e:
-                    return f"❌ Error in comparison analysis: {str(e)}"
-            
-            elif function_name == "trend_analysis":
-                trend_query = arguments.get("trend_query", "")
-                time_period = arguments.get("time_period", "last 5 years")
-                group_by = arguments.get("group_by", "drug")
-                include_insights = arguments.get("include_insights", True)
-                
-                # Use reasoning model for trend analysis
-                try:
-                    # Ensure project root is in path
-                    project_root = Path(__file__).resolve().parents[2]
-                    if str(project_root) not in sys.path:
-                        sys.path.insert(0, str(project_root))
-                        
-                    from src.analysis.clinical_trial_analyzer_reasoning import ClinicalTrialAnalyzerReasoning
-                    model = "o3" if group_by == "expert" else "o3-mini"
-                    analyzer = ClinicalTrialAnalyzerReasoning(self.openai_api_key, model=model)
-                    
-                    # Analyze the trend query
-                    analysis_result = analyzer.analyze_query(trend_query)
-                    
-                    # Get all trials for trend analysis
-                    all_trials = db.search_trials({}, 1000)
-                    
-                    response = f"📈 **Trend Analysis** (using {model})\n\n"
-                    response += f"**Trend Query:** {trend_query}\n\n"
-                    response += f"**Time Period:** {time_period}\n\n"
-                    response += f"**Grouping:** {group_by}\n\n"
-                    response += f"**Query Intent:** {analysis_result.query_intent}\n\n"
-                    
-                    if all_trials:
-                        # Simple trend analysis based on grouping
-                        if group_by == "phase":
-                            phase_stats = {}
-                            for trial in all_trials:
-                                phase = trial.get('trial_phase', 'Unknown')
-                                phase_stats[phase] = phase_stats.get(phase, 0) + 1
-                            
-                            response += "**Phase Distribution:**\n"
-                            for phase, count in sorted(phase_stats.items()):
-                                response += f"• {phase}: {count} trials\n"
-                        
-                        elif group_by == "sponsor":
-                            sponsor_stats = {}
-                            for trial in all_trials:
-                                sponsor = trial.get('sponsor', 'Unknown')
-                                sponsor_stats[sponsor] = sponsor_stats.get(sponsor, 0) + 1
-                            
-                            response += "**Top Sponsors:**\n"
-                            for sponsor, count in sorted(sponsor_stats.items(), key=lambda x: x[1], reverse=True)[:10]:
-                                response += f"• {sponsor}: {count} trials\n"
-                        
-                        else:  # drug or default
-                            response += f"**Total Trials Analyzed:** {len(all_trials)}\n\n"
-                            response += "**Sample Trials:**\n"
-                            for trial in all_trials[:10]:
-                                response += f"• {trial.get('nct_id', 'Unknown')}: {trial.get('trial_name', 'No name')}\n"
-                        
-                        if include_insights:
-                            response += "\n**AI Insights:**\n"
-                            response += "• Trend analysis reveals patterns in clinical trial development\n"
-                            response += "• Key insights about trial distribution and focus areas\n"
-                            response += "• Recommendations for future research directions\n\n"
-                    else:
-                        response += "**No trials found for trend analysis.**\n\n"
-                    
-                    return response
-                    
-                except Exception as e:
-                    return f"❌ Error in trend analysis: {str(e)}"
+            elif function_name == "get_trial_statistics":
+                stats = self.db.get_trial_statistics()
+                if stats:
+                    result = "📈 **Database Statistics**\n\n"
+                    for key, value in stats.items():
+                        result += f"• **{key}**: {value}\n"
+                    return result
+                else:
+                    return "❌ No statistics available"
             
             else:
                 return f"❌ Unknown function: {function_name}"
@@ -999,18 +679,13 @@ Use the detailed specifications in the attached document to ensure accurate extr
 
 def main():
     """Main function to run the chat interface"""
-    # Load environment variables
-    load_dotenv()
+    load_dotenv(encoding='utf-8-sig')
     
-    # Get OpenAI API key
     api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("❌ OPENAI_API_KEY not found in .env file!")
-        print("Please create a .env file with your OpenAI API key:")
-        print("OPENAI_API_KEY=your-api-key-here")
+    if not api_key or api_key == 'your_openai_api_key_here':
+        print("❌ OPENAI_API_KEY not found or is a placeholder in .env file!")
         return
     
-    # Initialize chat interface
     try:
         chat = ClinicalTrialChatMCP(api_key)
         print("🏥 Clinical Trial Chat Assistant (MCP Enhanced)")
