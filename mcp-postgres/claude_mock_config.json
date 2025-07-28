@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "clinical-trials-mock": {
-      "command": "npm",
-      "args": ["run", "mock-mcp"],
-      "cwd": "."
-    }
-  }
-} 
