@@ -2,341 +2,133 @@
 
 ## 🤖 Overview
 
-The Chat Assistant tab provides advanced natural language querying capabilities for clinical trials using the Model Context Protocol (MCP). This guide helps you resolve issues and get the chat functionality working.
+The Chat Assistant tab provides advanced natural language querying capabilities for clinical trials. It is powered by an integrated Model Context Protocol (MCP) server that connects to a **Supabase** database backend. This guide helps you resolve common issues.
 
 ## 🚨 Common Issues
 
-### **1. "MCP Chat module is not available"**
+### 1. "Failed to connect to Supabase"
 
 **Symptoms:**
-- Red error message in Chat Assistant tab
-- "MCP Chat module not available" displayed
-- Chat interface not functional
+-   Red error message in the UI on startup.
+-   "Failed to connect to Supabase" or similar database connection errors in the console logs.
+-   The Chat Assistant tab may be unresponsive or show connection errors.
 
 **Causes:**
-- MCP package not installed
-- MCP server files missing
-- Import path issues
-- Python path problems
+-   Incorrect `SUPABASE_URL` or `SUPABASE_KEY` in the `.env` file.
+-   No internet connection.
+-   Supabase project is paused or experiencing issues.
+-   Firewall or network policies blocking the connection.
 
 **Solutions:**
 
-#### **A. Install MCP Package**
-```bash
-# Install the MCP package
-pip install mcp
-```
+-   **Verify `.env` file**: Double-check that your Supabase credentials in the `.env` file are correct.
+-   **Check Internet Connection**: Ensure your machine can access the internet.
+-   **Check Supabase Status**: Visit your Supabase project dashboard to ensure it's active.
+-   **Test Connection**: Use a simple script to test the connection independently (see `simple_supabase_test.py`).
 
-#### **B. Verify MCP Files**
-Ensure these files exist:
-```
-src/mcp/
-├── clinical_trial_mcp_server.py  # ✅ Required
-├── clinical_trial_chat_mcp.py    # ✅ Required
-└── __init__.py                   # ✅ Required
-```
-
-#### **C. Check Python Path**
-```bash
-# Test MCP import
-python -c "import mcp; print('✅ MCP available')"
-```
-
-### **2. "Failed to initialize MCP chat assistant"**
+### 2. Chat Assistant Returns No Data or Errors
 
 **Symptoms:**
-- Error during chat interface initialization
-- MCP server connection issues
-- Subprocess errors
+-   Queries like "list all trials" return an empty result.
+-   You see errors in the console related to `NoneType` or missing data.
+-   The UI shows "No trials found" even when you expect data.
 
 **Causes:**
-- MCP server not starting
-- Port conflicts
-- File path issues
-- Missing dependencies
+-   The database migration was not run or failed.
+-   The Supabase tables are empty.
+-   Row Level Security (RLS) policies in Supabase are blocking access.
 
 **Solutions:**
 
-#### **A. Start MCP Server Manually**
-```bash
-# In a separate terminal
-cd src/mcp
-python clinical_trial_mcp_server.py
-```
+-   **Run Data Migration**: Ensure you have run `python migrate_data_to_supabase.py` successfully.
+-   **Check Supabase Tables**: Log in to your Supabase project and verify that the `clinical_trials`, `drug_info`, and `clinical_info` tables contain data.
+-   **Review RLS Policies**: Check the RLS policies on your tables. For testing, you can set up a permissive policy that allows reads for `anon` users. Refer to `fix_supabase_rls.sql` for an example.
 
-#### **B. Check Server Logs**
-Look for error messages in the terminal where you started the MCP server.
-
-#### **C. Verify Dependencies**
-```bash
-# Check if all required packages are installed
-pip install -r requirements_ui.txt
-pip list | grep -E "(mcp|openai|sqlite)"
-```
-
-### **3. Import Errors**
+### 3. "OpenAI API Key not found" or 401 Errors from OpenAI
 
 **Symptoms:**
-- ModuleNotFoundError
-- ImportError messages
-- Path-related errors
+-   An error message indicating an issue with the OpenAI API key.
+-   The assistant responds with an authentication error.
 
 **Causes:**
-- Incorrect import paths
-- Missing __init__.py files
-- Python path issues
+-   `OPENAI_API_KEY` is missing from the `.env` file or is incorrect.
+-   Your OpenAI account has insufficient credits.
 
 **Solutions:**
 
-#### **A. Fix Import Paths**
-The UI app uses dynamic path resolution:
-```python
-# Automatically adds MCP path to sys.path
-mcp_path = os.path.join(os.path.dirname(__file__), '..', 'mcp')
-sys.path.append(mcp_path)
-```
+-   **Verify API Key**: Ensure your `OPENAI_API_KEY` is correctly set in the `.env` file.
+-   **Check OpenAI Account**: Check your OpenAI account status and usage limits.
 
-#### **B. Check File Structure**
-Ensure the correct file structure:
-```
-clinical_trial/
-├── src/
-│   ├── mcp/
-│   │   ├── __init__.py
-│   │   ├── clinical_trial_mcp_server.py
-│   │   └── clinical_trial_chat_mcp.py
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   └── mcp_checker.py
-│   └── ui/
-│       └── app.py
-```
+## 🔧 Step-by-Step Troubleshooting
 
-## 🔧 Step-by-Step Setup
+### Phase 1: Verify Configuration
 
-### **Phase 1: Basic Setup**
+1.  **Check `.env` file**:
+    Make sure it contains all three required keys:
+    ```
+    OPENAI_API_KEY="sk-..."
+    SUPABASE_URL="https://....supabase.co"
+    SUPABASE_KEY="ey..."
+    ```
 
-1. **Install MCP Package**
-   ```bash
-   pip install mcp
-   ```
+2.  **Check Dependencies**:
+    Ensure all requirements are installed:
+    ```bash
+    pip install -r config/requirements.txt
+    pip install -r config/requirements_ui.txt
+    ```
 
-2. **Verify Installation**
-   ```bash
-   python -c "import mcp; print('MCP version:', mcp.__version__)"
-   ```
+### Phase 2: Test Database Connection & Data
 
-3. **Check File Structure**
-   ```bash
-   ls src/mcp/
-   # Should show:
-   # clinical_trial_mcp_server.py
-   # clinical_trial_chat_mcp.py
-   # __init__.py
-   ```
+1.  **Run Supabase Connection Test**:
+    Execute `simple_supabase_test.py` to verify that a basic connection can be established.
 
-### **Phase 2: Test MCP Server**
+2.  **Inspect Supabase Data**:
+    -   Log in to your Supabase dashboard.
+    -   Use the Table Editor to view the `clinical_trials` table.
+    -   Confirm that it has rows of data. If not, the migration failed.
 
-1. **Start MCP Server**
-   ```bash
-   cd src/mcp
-   python clinical_trial_mcp_server.py
-   ```
+### Phase 3: Test the Full Application
 
-2. **Check Server Output**
-   - Look for "Server started" messages
-   - Check for any error messages
-   - Verify port availability
+1.  **Run the UI**:
+    ```bash
+    python main.py ui
+    ```
 
-3. **Test Server Response**
-   - Server should respond to initialization
-   - No immediate crashes or errors
+2.  **Check Console Logs**:
+    -   Look for "✅ Connected to Supabase successfully".
+    -   Look for "MCP server started successfully".
+    -   Watch for any red error messages.
 
-### **Phase 3: Test Chat Interface**
-
-1. **Start UI**
-   ```bash
-   python main.py ui
-   ```
-
-2. **Navigate to Chat Assistant**
-   - Click on "Chat Assistant" tab
-   - Check status messages
-
-3. **Test Chat Functionality**
-   - Try a simple query like "Find diabetes trials"
-   - Check for response
-   - Verify error handling
-
-## 📊 Status Indicators
-
-### **✅ Working Status**
-- Green "✅ MCP Chat Available" message
-- "Advanced chat functionality is ready to use!"
-- Chat input field is active
-- Example queries work
-
-### **⚠️ Partial Issues**
-- Yellow warning messages
-- Some features working, others not
-- Intermittent errors
-
-### **❌ Not Working**
-- Red error messages
-- "MCP Chat module not available"
-- No chat interface
-- Import errors
+3.  **Test in the UI**:
+    -   Navigate to the "Chat Assistant" tab.
+    -   Start with a very simple query like `"list trials limit 1"`.
+    -   If that works, try a more complex query like `"find diabetes trials"`.
 
 ## 🛠️ Advanced Troubleshooting
 
-### **1. Debug MCP Server**
+### 1. Debug Logging
+If you're facing persistent issues, enable debug logging in the database and MCP files to get more detailed output.
+-   In `src/database/clinical_trial_database_supabase.py`:
+    ```python
+    logging.basicConfig(level=logging.DEBUG)
+    ```
+-   In `src/mcp/clinical_trial_chat_mcp.py`:
+    ```python
+    logging.basicConfig(level=logging.DEBUG)
+    ```
+    Then, rerun `python main.py ui` and check the detailed logs.
 
-**Enable Debug Logging:**
-```python
-# In clinical_trial_mcp_server.py
-logging.basicConfig(level=logging.DEBUG)
-```
-
-**Check Server Process:**
-```bash
-# Check if MCP server is running
-ps aux | grep clinical_trial_mcp_server
-# On Windows
-tasklist | findstr python
-```
-
-### **2. Debug Chat Interface**
-
-**Enable Verbose Output:**
-```python
-# In clinical_trial_chat_mcp.py
-logging.basicConfig(level=logging.DEBUG)
-```
-
-**Test Individual Components:**
-```bash
-# Test MCP chat module directly
-python -c "
-import sys
-sys.path.append('src/mcp')
-from clinical_trial_chat_mcp import ClinicalTrialChatMCP
-print('Chat module imported successfully')
-"
-```
-
-### **3. Network and Port Issues**
-
-**Check Port Availability:**
-```bash
-# Check if port 3000 is available (default MCP port)
-# On Linux/Mac
-netstat -an | grep 3000
-# On Windows
-netstat -an | findstr 3000
-```
-
-**Firewall Issues:**
-- Ensure firewall allows local connections
-- Check antivirus software blocking connections
-- Try temporarily disabling firewall for testing
-
-### **4. Database Issues**
-
-**Verify Database Access:**
-```bash
-# Test database connection
-python -c "
-from src.database.clinical_trial_database import ClinicalTrialDatabase
-db = ClinicalTrialDatabase()
-print('Database connection successful')
-"
-```
-
-## 🎯 Quick Fixes
-
-### **Immediate Solutions:**
-
-1. **Restart Everything**
-   ```bash
-   # Stop all processes (Linux/Mac)
-   pkill -f "python.*main.py"
-   pkill -f "python.*mcp"
-   
-   # On Windows
-   taskkill /F /IM python.exe
-   
-   # Restart UI
-   python main.py ui
-   ```
-
-2. **Reinstall MCP**
-   ```bash
-   pip uninstall mcp -y
-   pip install mcp
-   ```
-
-3. **Clear Cache**
-   ```bash
-   # Remove Python cache
-   find . -name "__pycache__" -type d -exec rm -rf {} +
-   # On Windows
-   for /d /r . %%d in (__pycache__) do @if exist "%%d" rd /s /q "%%d"
-   ```
-
-4. **Check Environment**
-   ```bash
-   # Verify Python environment
-   python --version
-   pip list | grep mcp
-   ```
-
-## 📋 Testing Checklist
-
-### **Before Testing:**
-- [ ] MCP package installed
-- [ ] All MCP files present
-- [ ] Database accessible
-- [ ] OpenAI API key configured
-- [ ] No port conflicts
-
-### **During Testing:**
-- [ ] UI starts without errors
-- [ ] Chat Assistant tab accessible
-- [ ] Status messages clear
-- [ ] Chat input functional
-- [ ] Responses received
-
-### **After Testing:**
-- [ ] Chat history maintained
-- [ ] Error handling works
-- [ ] Performance acceptable
-- [ ] No memory leaks
+### 2. Clearing the Database
+If you suspect a corrupted migration, you can clear the data in your Supabase tables and re-run the migration.
+-   Use the `clear_supabase_data.sql` script in your Supabase SQL Editor.
+-   Then, run `python migrate_data_to_supabase.py` again.
 
 ## 🎉 Success Indicators
 
-**When everything is working correctly:**
+When everything is working correctly:
 
-- ✅ **Chat Assistant tab shows green status**
-- ✅ **Chat input field is active and responsive**
-- ✅ **Natural language queries work**
-- ✅ **Responses are relevant and helpful**
-- ✅ **No error messages in console**
-- ✅ **MCP server running in background**
-
-**Example working query:**
-```
-User: "Find all diabetes trials with semaglutide"
-Assistant: "I found 3 diabetes trials with semaglutide..."
-```
-
-## 💡 Pro Tips
-
-1. **Keep MCP Server Running**: Start it in a separate terminal and keep it running
-2. **Monitor Logs**: Watch for error messages during development
-3. **Test Incrementally**: Start with simple queries before complex ones
-4. **Use Debug Mode**: Enable debug logging when troubleshooting
-5. **Check Dependencies**: Ensure all required packages are up to date
-
----
-
-**Remember: MCP Chat is an advanced feature. The basic clinical trial analysis functionality works perfectly without it!** 🚀🏥📊 
+-   ✅ The UI starts without any connection errors in the console.
+-   ✅ The "Database Status" in the UI shows a successful connection and the correct trial count.
+-   ✅ The Chat Assistant is responsive.
+-   ✅ Natural language queries return accurate results from your Supabase data. 

@@ -1,195 +1,131 @@
 # 🏥 Clinical Trial Analysis System
 
-A comprehensive AI-powered system for analyzing clinical trials using OpenAI's reasoning models and Model Context Protocol (MCP).
+An AI-powered system for analyzing clinical trials, featuring a Supabase backend, a Streamlit UI, and advanced reasoning models.
 
-## 🚀 Features
+## ✨ Key Features
 
-- **AI-Driven Search**: Uses OpenAI's reasoning models (o3) for intelligent natural language query understanding
-- **MCP Integration**: Model Context Protocol for standardized AI tool access
-- **Direct API Integration**: Fetches real trial data from ClinicalTrials.gov API
-- **Web Interface**: Streamlit-based UI for easy interaction
-- **Database Management**: SQLite database for storing and querying trial data
-- **Advanced Analysis**: Multi-model analysis with reasoning capabilities
-- **Enhanced LLM Query Processing**: Sophisticated LLM-based query parsing with robust fallback logic for synonyms, brand names, and multi-term queries
+-   **AI-Driven Search**: Natural language queries powered by OpenAI's reasoning models.
+-   **Supabase Backend**: A scalable and robust PostgreSQL backend for all clinical trial data.
+-   **Integrated MCP**: The Model Context Protocol (MCP) is now a core, automatically-run feature for advanced chat and tool use.
+-   **Streamlit Web UI**: An intuitive interface for interacting with the system.
+-   **Advanced Analysis**: In-depth analysis of trial data, including status, phase, and endpoints.
 
-## 🏗️ Architecture
+## 🏛️ Architecture
 
-```
-clinical_trial/
-├── src/
-│   ├── analysis/          # AI analysis modules
-│   ├── database/          # Database management
-│   ├── mcp/              # Model Context Protocol servers
-│   ├── ui/               # Streamlit web interface
-│   └── utils/            # Utility functions
-├── data/                 # Data storage
-├── docs/                 # Documentation
-├── tests/                # Test files
-└── config/               # Configuration files
+The system's architecture is built around a Streamlit frontend, a Python backend with an integrated MCP server, and a Supabase database.
+
+```mermaid
+graph TD
+    A[User via Streamlit UI] --> B{Application Backend};
+    B --> C{MCP Server (background process)};
+    B --> D{OpenAI API};
+    C --> E[Supabase Database];
+    subgraph "User Interaction"
+        A
+    end
+    subgraph "Application Logic"
+        B
+        C
+        D
+    end
+    subgraph "Data Layer"
+        E
+    end
 ```
 
 ## 🛠️ Installation
 
 ### Prerequisites
 
-- Python 3.8+
-- OpenAI API key
-- Git
+-   Python 3.8+
+-   An OpenAI API Key
+-   A Supabase Project (URL and API Key)
+-   Git
 
 ### Setup
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd clinical_trial
-   ```
+1.  **Clone the repository**
+    ```bash
+    git clone <repository-url>
+    cd clinical_trial
+    ```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r config/requirements.txt
-   pip install -r config/requirements_ui.txt
-   ```
+2.  **Install dependencies**
+    ```bash
+    pip install -r config/requirements.txt
+    pip install -r config/requirements_ui.txt
+    ```
 
-3. **Environment setup**
-   ```bash
-   python setup_env.py
-   ```
+3.  **Configure Environment**
+    Run the setup script to create a `.env` file and add your OpenAI API Key:
+    ```bash
+    python main.py setup
+    ```
+    Then, manually add your Supabase credentials to the `.env` file:
+    ```
+    SUPABASE_URL="your_supabase_project_url"
+    SUPABASE_KEY="your_supabase_api_key"
+    ```
 
-4. **Configure API keys**
-   Create a `.env` file in the root directory:
-   ```env
-   OPENAI_API_KEY=your_openai_api_key_here
-   ```
+4.  **Database Migration (One-Time Setup)**
+    Apply the schema from `corrected_supabase_setup.sql` to your Supabase project's SQL Editor. Then, run the migration script to populate your database from the local `clinical_trials.db` file:
+    ```bash
+    python migrate_data_to_supabase.py
+    ```
 
 ## 🚀 Usage
 
 ### Quick Start
 
-1. **Start the web interface**
-   ```bash
-   python main.py ui
-   ```
+1.  **Start the web interface**
+    ```bash
+    python main.py ui
+    ```
+    This single command starts the Streamlit UI and the background MCP server.
 
-2. **Open your browser**
-   Navigate to `http://localhost:8502`
+2.  **Open your browser**
+    Navigate to `http://localhost:8502`
 
-3. **Start analyzing trials**
-   Use the chat interface to ask questions like:
-   - "Find diabetes trials"
-   - "Compare Phase 3 cancer immunotherapy trials"
-   - "Show me recruiting bladder cancer trials"
+3.  **Start analyzing trials**
+    Use the integrated chat interface to ask questions like:
+    -   "Find diabetes trials"
+    -   "Compare Phase 3 cancer immunotherapy trials"
+    -   "Show me recruiting bladder cancer trials"
 
 ### Command Line Interface
 
+The `main.py` script provides several commands for managing the system:
 ```bash
 # Setup and configuration
 python main.py setup
 
-# Start web interface
+# Start web interface (includes MCP server)
 python main.py ui
 
-# Process all trials
-python main.py process
-
-# Populate database with trials
-python main.py populate
-
-# Run tests
+# (Optional) Run tests against the configured database
 python main.py test
-
-# Test reasoning models
-python main.py test-reasoning
-
-# Test MCP functionality
-python main.py test-mcp-query
 python main.py test-mcp-chat
 ```
 
-## 🧠 Consistent Query Logic Across CLI and UI
-
-Both the **MCP chat CLI** (`python src/mcp/clinical_trial_chat_mcp.py`) and the **Streamlit UI** (MCP Chat tab) use the **same backend logic and database** for clinical trial queries. This ensures that:
-- All advanced queries (natural language, smart search, statistics, etc.) are powered by the same MCP server and database.
-- Results are consistent between the CLI and UI, provided both are using the same working directory and environment.
-
-If you see different results between the CLI and UI:
-- **Check that both are using the same `clinical_trials.db` file.**
-- Ensure there are no duplicate database files in different folders.
-- Confirm both are running in the same Python environment.
-
----
-
-## 🤖 AI Features
-
-### Reasoning Models
-- **o3-mini**: Default reasoning model for complex analysis
-- **o3**: Advanced reasoning for detailed insights
-- **o4-mini**: Latest reasoning capabilities
-
-### Enhanced LLM-Based Query Processing
-- Natural language queries are parsed using advanced LLM reasoning (see `docs/ENHANCED_LLM_QUERY_PROCESSING.md`).
-- The system can extract multiple synonyms, brand names, and related terms for each filter (e.g., "semaglutide", "Ozempic", "Wegovy").
-- Robust fallback logic ensures queries work even if the LLM is unavailable.
+## 🧠 AI & Database Features
 
 ### Natural Language Understanding
-The system uses AI to understand complex queries:
-- "Find diabetes trials with semaglutide"
-- "Compare Phase 3 cancer immunotherapy trials"
-- "What bladder cancer trials are recruiting?"
+The system uses AI to understand complex queries and interact with the Supabase database via MCP tools.
 
 ### MCP Tools
-- `search_trials`: Intelligent trial search
-- `smart_search`: Natural language search
-- `reasoning_query`: Advanced semantic search using reasoning models
-- `compare_analysis`: AI-powered comparison of clinical trials
-- `trend_analysis`: Analyze trends and patterns in trial data
-- `get_trial_details`: Detailed trial information
-- `store_trial`: Add new trials to database
+The integrated MCP server provides tools for:
+-   `search_trials`: Intelligent trial search.
+-   `get_trial_details`: Detailed trial information.
+-   `get_trials_by_drug` / `get_trials_by_indication`: Filtered searches.
+-   And more for comparison, statistics, and analysis.
 
 ## 📊 Database Schema
 
-The system uses a SQLite database with the following main table:
+The system uses a **Supabase (PostgreSQL)** database with a schema distributed across multiple tables, including `clinical_trials`, `drug_info`, and `clinical_info` to store detailed trial data. The full schema can be found in `corrected_supabase_setup.sql`.
 
-```sql
-CREATE TABLE clinical_trials (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nct_id TEXT UNIQUE NOT NULL,
-    trial_name TEXT,
-    trial_phase TEXT,
-    trial_status TEXT,
-    patient_enrollment INTEGER,
-    sponsor TEXT,
-    primary_endpoints TEXT,
-    secondary_endpoints TEXT,
-    inclusion_criteria TEXT,
-    exclusion_criteria TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+## 🔧 Troubleshooting
 
-## 🛠️ Troubleshooting UI/CLI Result Mismatches
-
-If you notice that the Streamlit UI and the CLI chat assistant show different results for the same query:
-
-1. **Check Database Path Consistency**
-   - Both the CLI and UI should use the same `clinical_trials.db` file (default in project root).
-   - If you have multiple `.db` files, results may differ.
-
-2. **Check Python Environment**
-   - Ensure both are running in the same Python environment (check with `which python` or `pip list`).
-
-3. **Check Working Directory**
-   - Run both from the project root to avoid path issues.
-
-4. **Check for Recent Data Population**
-   - If you just populated the database, restart the UI to refresh its view.
-
-5. **Check for UI Tab Differences**
-   - Only the "MCP Chat" tab uses the full MCP backend. Other tabs may use direct analysis and not query the database.
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-- `OPENAI_API_KEY`: Your OpenAI API key
-- `
+-   **Connection Errors**: Verify that your `OPENAI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_KEY` in the `.env` file are correct and that you have an active internet connection.
+-   **Data Not Appearing**: Ensure the database migration script ran without errors and that your Supabase tables are populated.
+-   **General Issues**: Check the console output when running `python main.py ui` for any error messages.
+-   **Detailed Docs**: For more detailed documentation, see the `docs/` directory.

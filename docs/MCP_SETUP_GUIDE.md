@@ -2,70 +2,74 @@
 
 ## 🤖 What is MCP?
 
-MCP (Model Context Protocol) is an advanced feature that enables natural language querying across multiple clinical trials. It provides intelligent analysis, comparison capabilities, and advanced search functionality.
+MCP (Model Context Protocol) is an advanced feature, now fully integrated into the system, that enables natural language querying of clinical trials stored in a **Supabase** backend. It provides intelligent analysis, comparison capabilities, and advanced search functionality.
 
 ## 🚀 Key Features
 
-- **Multi-Trial Storage**: Store and query across multiple clinical trials
-- **Natural Language Search**: Ask questions in plain English
+- **Multi-Trial Storage**: Store and query across multiple clinical trials in Supabase.
+- **Natural Language Search**: Ask questions in plain English.
 - **Advanced Filtering**: Search by drug, indication, phase, status, etc.
-- **Trial Comparison**: Compare multiple trials side-by-side
-- **Statistical Analysis**: Generate insights across trial databases
-- **Data Export**: Export results in CSV/JSON formats
+- **Trial Comparison**: Compare multiple trials side-by-side.
+- **Statistical Analysis**: Generate insights across the trial database.
+- **Data Export**: Export results in CSV/JSON formats.
 
-## ⚠️ Current Status
+## ✅ Current Status
 
-The MCP functionality is **optional** and not required for basic clinical trial analysis. The main UI will work perfectly without it.
+The MCP functionality is now a core part of the application. The MCP server starts automatically when you run the UI, connecting to your configured Supabase database.
 
-## 🚀 Basic Usage (No MCP Required)
+## 🔧 Setup
 
-You can use all the core features without MCP:
+The setup process is now streamlined.
 
-- ✅ **Single Trial Analysis**: Analyze individual trials with AI models
-- ✅ **Model Comparison**: Compare different AI models
-- ✅ **Results History**: View and export analysis results
-- ✅ **Database Management**: Store and retrieve trial data
-
-## 🔧 Setting Up MCP (Optional)
-
-If you want to enable the advanced MCP chat functionality:
-
-### **1. Install MCP Dependencies**
+### 1. Environment Configuration
+Run the setup script and provide your OpenAI API key:
 ```bash
-pip install mcp
+python main.py setup
 ```
 
-### **2. Start MCP Server**
-```bash
-# Run the MCP server in a separate terminal
-python src/mcp/clinical_trial_mcp_server.py
+### 2. Supabase Credentials
+Add your Supabase URL and Key to the `.env` file created in the previous step:
+```
+SUPABASE_URL="your_supabase_project_url"
+SUPABASE_KEY="your_supabase_api_key"
 ```
 
-### **3. Configure MCP Client**
-The MCP chat interface will automatically connect to the server when available.
+### 3. Database Migration
+Run the migration script to populate your Supabase database.
+First, apply the schema from `corrected_supabase_setup.sql` to your Supabase project.
+Then, run the migration:
+```bash
+python migrate_data_to_supabase.py
+```
+
+### 4. Run the Application
+Start the UI. The MCP server will start automatically in the background.
+```bash
+python main.py ui
+```
 
 ## 📋 Available MCP Tools
 
-When MCP is properly configured, you get access to these tools:
+The MCP chat interface provides access to these tools for interacting with the Supabase database:
 
 ### **Core Storage & Analysis**
-1. **`store_trial`**: Store and analyze clinical trials
-2. **`analyze_trial_with_model`**: Analyze with specific models
-3. **`get_available_columns`**: List database schema
+1.  **`store_trial`**: Store and analyze clinical trials.
+2.  **`analyze_trial_with_model`**: Analyze with specific models.
+3.  **`get_available_columns`**: List database schema.
 
 ### **Advanced Search**
-4. **`search_trials`**: Flexible search with filters
-5. **`smart_search`**: Natural language search
-6. **`get_trials_by_drug`**: Find trials by drug name
-7. **`get_trials_by_indication`**: Find trials by disease
+4.  **`search_trials`**: Flexible search with filters.
+5.  **`smart_search`**: Natural language search.
+6.  **`get_trials_by_drug`**: Find trials by drug name.
+7.  **`get_trials_by_indication`**: Find trials by disease.
 
 ### **Analysis & Comparison**
-8. **`get_trial_details`**: Detailed trial information
-9. **`compare_trials`**: Side-by-side comparison
-10. **`get_trial_statistics`**: Statistical analysis
+8.  **`get_trial_details`**: Detailed trial information.
+9.  **`compare_trials`**: Side-by-side comparison.
+10. **`get_trial_statistics`**: Statistical analysis.
 
 ### **Data Export**
-11. **`export_trials`**: Export to CSV/JSON formats
+11. **`export_trials`**: Export to CSV/JSON formats.
 
 ## 🎯 Example MCP Queries
 
@@ -80,121 +84,48 @@ When MCP is properly configured, you get access to these tools:
 
 ## 🔍 Troubleshooting
 
-### **MCP Module Not Found**
-If you see "MCP Chat module not available":
-- This is normal if MCP is not installed
-- The basic functionality will still work
-- Install MCP if you want advanced features
+### **Connection Issues**
+If the chat functionality is not working:
+1.  Verify your **Supabase URL and Key** in the `.env` file are correct.
+2.  Check your internet connection.
+3.  Ensure your Supabase project is active and accessible.
+4.  Review the console logs for any error messages related to Supabase or the MCP server.
 
-### **MCP Server Connection Issues**
-If MCP is installed but not working:
-1. Check if the MCP server is running
-2. Verify the server port (default: 3000)
-3. Check firewall settings
-4. Review server logs for errors
-
-### **Performance Issues**
-- MCP queries can be slower than basic analysis
-- Large datasets may take time to process
-- Consider using filters to narrow down results
-
-## 🏥 Recommended Workflow
-
-### **For New Users**
-1. Start with basic single trial analysis
-2. Learn the interface and features
-3. Set up MCP later if needed
-
-### **For Advanced Users**
-1. Set up MCP server
-2. Use natural language queries
-3. Leverage advanced analytics
-
-### **For Researchers**
-1. Use both basic and MCP features
-2. Export data for further analysis
-3. Compare multiple trials efficiently
-
-## 📊 Feature Comparison
-
-| Feature | Basic UI | With MCP |
-|---------|----------|----------|
-| Single Trial Analysis | ✅ | ✅ |
-| Model Comparison | ✅ | ✅ |
-| Results History | ✅ | ✅ |
-| Natural Language Search | ❌ | ✅ |
-| Multi-Trial Comparison | ❌ | ✅ |
-| Advanced Statistics | ❌ | ✅ |
-| Data Export | Basic | Advanced |
-
-## 🎉 Getting Started
-
-### **Quick Start (No MCP)**
-```bash
-# 1. Set up environment
-python main.py setup
-
-# 2. Start the UI
-python main.py ui
-
-# 3. Begin analyzing trials!
-```
-
-### **Full Setup (With MCP)**
-```bash
-# 1. Set up environment
-python main.py setup
-
-# 2. Install MCP
-pip install mcp
-
-# 3. Start MCP server (in separate terminal)
-python src/mcp/clinical_trial_mcp_server.py
-
-# 4. Start the UI
-python main.py ui
-
-# 5. Use advanced features!
-```
+### **Data Issues**
+If queries return no data or unexpected results:
+1.  Ensure the **database migration** ran successfully.
+2.  Verify that your tables in Supabase (`clinical_trials`, `drug_info`, `clinical_info`) are populated with data.
+3.  Use simple queries first (e.g., "list all trials") to test the connection.
 
 ## 🏗️ Technical Architecture
 
-```
-User Query → Chat Interface → OpenAI LLM → Function Calling → MCP Server → Database → Results
+The architecture is centered around the Streamlit UI, the MCP Server, and the Supabase database.
+
+```mermaid
+graph TD
+    A[User via Streamlit UI] --> B{MCP Chat Interface};
+    B --> C{OpenAI LLM};
+    C -- Decides to call tool --> D[MCP Server];
+    D -- Executes function --> E[Supabase Database];
+    E -- Returns data --> D;
+    D -- Returns result --> C;
+    C -- Generates response --> A;
 ```
 
 ### **Data Flow**
-1. **User Input**: Natural language or structured query
-2. **LLM Processing**: OpenAI interprets intent and selects tools
-3. **MCP Execution**: Server processes request using appropriate tools
-4. **Database Query**: SQLite database returns relevant trials
-5. **Result Formatting**: Results formatted as requested
-6. **Response**: Comprehensive answer with context
-
-## 🔧 Model Integration
-
-- **GPT-4o**: Fast, JSON schema support
-- **GPT-4o-mini**: Cost-effective analysis
-- **o4-mini**: Reasoning-optimized
-- **GPT-4**: Comprehensive analysis
+1.  **User Input**: A user types a natural language query into the chat interface.
+2.  **LLM Processing**: The query is sent to an OpenAI model, which determines the user's intent and decides which MCP tool to call.
+3.  **MCP Execution**: The MCP server, running in the background, receives the tool call request.
+4.  **Database Query**: The MCP server executes the corresponding function, which queries the **Supabase** database.
+5.  **Response**: The data is returned to the LLM, which then generates a user-friendly response.
 
 ## 🆘 Support
 
-### **Basic Issues**
-- Check the main README.md
-- Review error messages in the UI
-- Verify your OpenAI API key
-
-### **MCP Issues**
-- Check MCP server logs
-- Verify network connectivity
-- Review MCP documentation
-
-### **Getting Help**
-- Check the documentation in `docs/`
-- Review error logs
-- Test with simple queries first
+For any issues, please:
+-   Check the main `docs/README.md`.
+-   Review error messages in the UI and console.
+-   Verify your OpenAI and Supabase API keys.
+-   Confirm your database schema and data in Supabase.
 
 ---
-
-**Remember: MCP is optional! The basic clinical trial analysis system works perfectly without it.** 🚀🏥📊 
+**The Clinical Trial Analysis System now leverages the power of Supabase for a more robust and scalable experience.** 🚀🏥📊 
